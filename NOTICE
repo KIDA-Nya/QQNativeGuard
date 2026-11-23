@@ -1,0 +1,138 @@
+# NOTICE
+
+## 版权归属
+
+QQ Native Guard
+Copyright (C) 2026 KIDA-Nya
+
+本项目是 [Xalsace/QQEnhancedBypass](https://github.com/Xalsace/QQEnhancedBypass) 的衍生作品。
+
+### 上游版权
+
+```
+QQ Enhanced Bypass
+Copyright (C) 2026 Xalsace
+https://github.com/Xalsace/QQEnhancedBypass
+Licensed under GNU General Public License v3.0
+```
+
+### 更早期的来源
+
+```
+QQNTHookBypass
+Copyright (C) 2026 jhl337
+https://github.com/jhl337/QQNTHookBypass
+```
+
+### 第三方组件
+
+```
+ByteHook — Android inline hook framework
+Copyright (C) 2021-2024 ByteDance
+https://github.com/bytedance/android-inline-hook
+Licensed under Apache License 2.0
+```
+
+---
+
+## 修改声明
+
+依据 GPL-3.0 第 5 条（分发修改版本须声明修改），本项目的修改内容如下：
+
+### 相对于上游 Xalsace/QQEnhancedBypass 的修改
+
+**Native 层（主要贡献）**
+
+| 文件 | 上游状态 | 本项目状态 | 修改性质 |
+|---|---|---|---|
+| `hook_libc.cpp` | 110 行，仅 Java 层 `/proc/self/maps` 行过滤 | 2100+ 行，30+ hook 点 | **大幅重写** |
+| `hook_libfekit.cpp` | 57 行 | 142 行 | 扩展 |
+| `hook_libturingxq.cpp` | 47 行 | 248 行 | 大幅扩展 |
+| `native-bypass.cpp` | 基础入口 | 249 行，含自检与错误处理 | 扩展 |
+| `hook_libc.h` | 基础声明 | 43 个声明 | 扩展 |
+
+**新增能力**
+
+1. **ByteHook inline hook 框架集成**
+   - 上游无 native hook，仅 Java 层读取拦截
+   - 本项目通过 `bytehook_hook_all` / `bytehook_hook_single` 覆盖 libc 与目标库
+
+2. **系统属性三入口覆盖**
+   - `__system_property_get`
+   - `__system_property_read_callback`（trampoline 代理用户回调）
+   - `__system_property_find`（记录 pi→name，覆盖 find+read 组合路径）
+   - **上游三者均无**
+
+3. **内容级文件伪造（`FakeKind` 框架）**
+   - `/proc/maps`, `/proc/smaps`, `/proc/mountinfo`, `/proc/status`
+   - `/proc/bootconfig`, `/proc/cpuinfo`, `/proc/version`, `/proc/cmdline`
+   - `/sys/devices/soc0/serial_number`
+   - **上游仅做 maps 行过滤**
+
+4. **SoC 平台标识伪造**
+   - `ro.board.platform` / `ro.chipname` / `ro.soc.model` / `ro.soc.manufacturer`
+   - `/proc/cpuinfo` 的 `Hardware` / `Processor` / `CPU part` 行
+   - **上游完全未覆盖**
+
+5. **Turing 明文注入**
+   - 在 `deflate` 入口做字节替换（`inject.txt` 规则）
+   - **上游无此能力**
+
+**Java 层（补充）**
+
+| 文件 | 上游状态 | 本项目状态 | 修改性质 |
+|---|---|---|---|
+| `DeviceInfoHook.java` | 153 行 | 691 行 | 扩展 |
+| `NetworkReportHook.java` | 基础拦截 | 572 行，观测/拦截分离 | 扩展 |
+| `HookConfig.java` | 基础配置 | 252 行，新增多个开关 | 扩展 |
+
+**新增能力**
+
+6. **`http.agent` 运行时重算**
+   - 修复 AOSP `RuntimeInit` 静态缓存导致的 UA 泄露
+   - **上游完全未覆盖**
+
+7. **观测/拦截分离（`NETWORK_OBSERVE_ONLY`）**
+   - 解决 `ENABLE_NETWORK_INTERCEPT=false` 时观测点全挂的问题
+   - **上游无此设计**
+
+**许可证变更**
+
+- 上游：README 标注 MIT，实际 LICENSE 文件为 GPL-3.0
+- 本项目：**统一为 GPL-3.0**（遵循实际 LICENSE 文件）
+
+---
+
+## 保留的原始内容
+
+以下内容来自上游，未做修改或仅做路径/包名适配：
+
+- `app/src/main/java/.../hooks/RootDetectionHook.java`（基础框架）
+- `app/src/main/java/.../hooks/XposedDetectionHook.java`（基础框架）
+- `app/src/main/java/.../hooks/DebugDetectionHook.java`
+- `app/src/main/java/.../hooks/RuntimeMonitorHook.java`
+- `app/src/main/java/.../utils/HookUtils.java`
+- `app/src/main/java/.../XposedEntry.java`（入口框架）
+- `app/src/main/cpp/hooks/hook_libmsf.cpp` / `hook_libmsfkernel.cpp`
+- `app/src/main/cpp/hooks/hook_libqsec.cpp` / `hook_libturingmfa.cpp`
+- `gradle` 构建配置
+
+---
+
+## GPL-3.0 合规说明
+
+本项目遵循 GPL-3.0，具体体现为：
+
+1. **源码完整提供** — 全部源代码在本仓库公开
+2. **许可证保留** — `LICENSE` 文件包含 GPL-3.0 全文
+3. **版权声明保留** — 本 NOTICE 文件保留上游与更早来源的版权信息
+4. **修改声明** — 本节详细说明所有修改
+5. **同等许可** — 本项目同样以 GPL-3.0 发布，不附加额外限制
+
+---
+
+## 联系方式
+
+- 项目主页：https://github.com/KIDA-Nya/QQNativeGuard
+- 上游项目：https://github.com/Xalsace/QQEnhancedBypass
+- 问题反馈：通过 GitHub Issues

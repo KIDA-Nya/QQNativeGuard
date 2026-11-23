@@ -1,0 +1,148 @@
+# QQ Native Guard 配置示例
+#
+# 部署位置：/data/local/tmp/qqguard.conf
+# 权限：chmod 644（QQ 进程需可读）
+#
+# 格式：KEY=VALUE，每行一个，# 开头为注释
+# 空值或注释掉 = 使用真实值
+
+# ============================================================
+# 一、总开关
+# ============================================================
+
+# Native 层 hook 总开关（ByteHook）
+ENABLE_NATIVE_HOOKS=true
+
+# 设备信息伪造总开关
+ENABLE_DEVICE_SPOOF=true
+
+# 环境（机型画像）伪造总开关
+ENV_SPOOF=true
+
+# ============================================================
+# 二、机型画像（必须整套自洽，否则被交叉验证发现）
+# ============================================================
+
+# 机型与品牌
+ENV_MODEL=<MODEL>          # 例：PGT110 (OPPO Find X7)
+ENV_DEVICE=<BRAND_MODEL>   # 例：OPPO_PGT110
+ENV_PRODUCT_NAME=<PRODUCT> # 例：PGT110
+ENV_BRAND=OPPO
+ENV_MANUFACTURER=OPPO
+
+# 系统版本
+ENV_RELEASE=15
+ENV_SDK=35
+ENV_BUILD_ID=<BUILD_ID>    # 例：UKQ1.231003.002
+ENV_INCREMENTAL=<INCREMENTAL>  # 例：1710000000
+ENV_DISPLAY=<DISPLAY>      # 例：PGT110_15.0.1.200(CN01)
+
+# 指纹（自洽规则：
+#   BRAND/PRODUCT/DEVICE:RELEASE/BUILD_ID/INCREMENTAL:user/release-keys
+#   DISPLAY 必须包含 MODEL；DEVICE 通常包含 MODEL）
+ENV_FINGERPRINT=<BRAND>/<PRODUCT>/<DEVICE>:<RELEASE>/<BUILD_ID>/<INCREMENTAL>:user/release-keys
+
+# 内核（保持真机值，伪造反而产生矛盾）
+ENV_KERNEL_RELEASE=5.4.254-qgki-tqmane-g9e38a9fabb4d
+ENV_KERNEL_VERSION=#1 SMP PREEMPT Wed Jul 29 22:33:04 CST 2026
+
+# Build 元信息（保持真机值）
+ENV_HOST=ReVork
+ENV_USER=Sabrina Carpenter
+ENV_DATE=2026-07-20
+ENV_SECURITY_PATCH=2026-07-01
+
+# ============================================================
+# 三、SoC / 平台标识（★ 最容易漏，必须与机型匹配）
+# ============================================================
+#
+# 平台代号对照：
+#   lahaina   = 骁龙 888   (SM8350)   OnePlus 9 Pro / 小米 11
+#   kalama    = 骁龙 8 Gen 2 (SM8550) 小米 13 / OPPO Find X6
+#   pineapple = 骁龙 8 Gen 3 (SM8650) OPPO Find X7 / 小米 14
+#   taro      = 骁龙 8 Gen 1 (SM8450)
+#
+#   例：若 ENV_MODEL=PGT110 (OPPO Find X7 = 骁龙 8 Gen 3)
+#       则 ENV_SOC_PLATFORM 必须是 kalama 或 pineapple
+# 如果这里留空，native 层会读到真机的 lahaina，与 PGT110 矛盾，服务端立刻识别伪造
+ENV_SOC_PLATFORM=kalama
+ENV_SOC_CHIPNAME=kalama
+ENV_SOC_MODEL=SM8650
+ENV_SOC_MANUFACTURER=Qualcomm
+
+# ============================================================
+# 四、设备唯一标识
+# ============================================================
+
+# 序列号（8 位 hex）
+FAKE_SERIAL=<8-hex-serial>
+
+# SoC 序列号（10 位数字）
+FAKE_SOC_SERIAL=<10-digit-soc-serial>
+
+# Android ID（16 位 hex，需同步 settings）
+FAKE_ANDROID_ID=<16-hex-android-id>
+
+# IMEI（15 位，必须 Luhn 校验通过）
+FAKE_IMEI=<15-digit-imei-luhn-valid>
+
+# OAID（UUID 格式）
+FAKE_OAID=<oaid-uuid>
+
+# QIMEI36（32 位 hex）
+FAKE_QIMEI36=<32-hex-qimei36>
+
+# ============================================================
+# 五、网络上报（观测 vs 拦截）
+# ============================================================
+#
+# 二选一：
+#   - 观测模式（推荐）：挂 hook 但放行，只记录。QQ 行为完全正常。
+#   - 拦截模式：挂 hook 并阻断。可能因"该发不发"被识别为异常。
+#
+# 两者都 false = 完全不挂 hook（无法诊断）
+
+# 观测模式（挂 hook，不拦截）
+NETWORK_OBSERVE_ONLY=true
+
+# 拦截模式（挂 hook 并拦截）
+ENABLE_NETWORK_INTERCEPT=false
+
+# ============================================================
+# 六、Native hook 细项开关
+# ============================================================
+
+# MMKV hook（★ 默认禁用：会导致 QQ 崩溃循环，5-6 秒一次）
+ENABLE_MMKV_HOOK=false
+
+# 签名校验绕过（可能影响稳定性，默认关闭）
+ENABLE_MSF_SIGNATURE_BYPASS=false
+
+# 调用者归因（性能开销，调试用）
+ENABLE_CALLER_ATTRIBUTION=false
+
+# ============================================================
+# 七、日志
+# ============================================================
+
+# logcat 输出
+VERBOSE_LOGGING=true
+
+# 日志文件路径（留空 = 不写文件）
+LOG_FILE=/storage/emulated/0/Android/data/com.tencent.mobileqq/qqnativeguard.log
+
+# 取证 dump（写入敏感数据，仅调试用）
+ENABLE_FORENSICS_DUMP=false
+
+# ============================================================
+# 八、Turing 明文注入（deflate 层）
+# ============================================================
+#
+# 部署位置：/storage/emulated/0/Android/data/com.tencent.mobileqq/inject.txt
+# 格式：FROM_HEX=TO_HEX（每行一条）
+#
+# 用途：Turing 走 .real_syscall 绕过 libc hook，只能在 deflate 入口替换字节
+# 示例（替换 DeviceID）：
+#   6530...3935=6438...3931
+
+ENABLE_TURING_INJECT=false
