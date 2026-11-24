@@ -32,7 +32,9 @@ public class NetworkReportHook {
         "trpc.o3.mobile_security",
         "trpc.ilive_cdn.report",
         "OidbSvc.0xd79",  // Device report
-        "wtlogin.device_lock",
+        // 【移除】wtlogin.device_lock —— 登录校验类命令，绝不能拦。
+        // 外部实证（WeChatTablet README）：误拦此命令会导致 "身份验证失败 (w21)"。
+        // "wtlogin.device_lock",
         "turing",
         "riskCheckWup",
         "DeviceTokenV3"
