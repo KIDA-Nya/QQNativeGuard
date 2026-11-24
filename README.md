@@ -1,166 +1,198 @@
 # QQ Native Guard
 
-腾讯系 App（QQ）**Native 层**环境检测绕过模块。
+**QQ 环境检测绕过 · Native 层**
 
-基于 [Xalsace/QQEnhancedBypass](https://github.com/Xalsace/QQEnhancedBypass) 的 Java 层能力继续开发，
-主要贡献集中在 **native 层（ByteHook）**、**设备指纹四通道一致性**、**可观测的拦截策略**。
+[![License](https://img.shields.io/badge/license-GPL--3.0-blue.svg)](LICENSE)
+[![Platform](https://img.shields.io/badge/platform-Android%208.0%2B-green.svg)]()
+[![Hook](https://img.shields.io/badge/hook-ByteHook-orange.svg)]()
+[![Verified](https://img.shields.io/badge/verified-23%2F23%20PASS-brightgreen.svg)](docs/VERIFY_REPORT.md)
 
-遵循上游 GPL-3.0 许可，详见 [LICENSE](LICENSE) 与 [NOTICE](NOTICE)。
+> 基于 [Xalsace/QQEnhancedBypass](https://github.com/Xalsace/QQEnhancedBypass) 继续开发，
+> 补上它 README 里明确列出但**尚未处理**的 Native 层检测。
+> 遵循上游 GPL-3.0，详见 [LICENSE](LICENSE) 与 [NOTICE](NOTICE)。
 
 ---
 
-## 技术亮点
+## 一句话
 
-> 以下每一条都是**实测抓包/反汇编**得出的结论，不是推测。
+**不用猜、不用试——把 QQ 上报给服务器的每一个设备字段，逐个找到来源属性、逐个对上。**
 
-### 🔍 亮点 1：设备信息其实只走 4 个通道
+---
 
-大多数同类项目假设"设备信息随处泄露，必须全面拦截"。实测（3 小时抓包 / 17.5 MB 上报流量 / 5.6k 帧）后发现：
+## 这个项目解决什么
 
-| # | 通道 | 泄露内容 | 是否加密 |
-|---|---|---|---|
-| 1 | **HTTP User-Agent** | `Dalvik/...; MODEL Build/ID)` | ❌ 明文 |
-| 2 | **QsecEst 1293B** | 85 字段（**仅 9 个是真设备特征**） | AES-128-CBC |
-| 3 | **MSF 长连接** | uin + QIMEI | 部分明文 |
-| 4 | **VOD_MSDK** | `androidDesc: BRAND_MODEL__SDK_VER` | ❌ 明文 |
+网上大部分 QQ 改机教程让你改 `Build.MODEL`，然后发现**没用**。
 
-**其余 10+ 个 SDK（Bugly / RMonitor / Mars / Statistics / Qimei…）虽然各自出网，但不上报新的设备维度。**
+因为设备身份不是一处泄露，是**十几处**，而且互相印证：
 
-这带来两个实际收益：
-- **工作量从"覆盖 10 个 SDK"缩小到"4 个具体点"**
-- 不必为了覆盖全部而 hook 高频 libc 函数（那会崩）
+```
+QsecEst 上报:  model=PGT110, board=kalama, soc=SM8650
+HTTP UA 上报:  Dalvik/...; PGT110 Build/UKQ1.231003.002
+MSF 上报:      QIMEI=<32-hex>
+VOD_MSDK 上报: androidDesc=OPPO_PGT110__15_35
+```
 
-### 🔍 亮点 2：`http.agent` 的 zygote 静态缓存陷阱
+**服务端一比对：四个通道必须指向同一台设备**。只改一处 → 立刻暴露。
 
-**这是最容易漏、也最致命的一条。**
+本项目做的就是把**全部通道 + 全部来源属性**一次性对齐。
 
-AOSP `RuntimeInit.commonInit()` 在 **zygote fork 出应用进程时**就把 UA 算成静态字符串：
+---
+
+## 硬核发现（全部实测，非推测）
+
+### 🔬 发现 1：85 个上报字段里，只有 9 个带真实设备身份
+
+解密 QsecEst（AES-128-CBC，已完全破解）后逐字段核对：
+
+```
+85 个字段
+  ├─ 52 个是 "E_NU"（空值）
+  ├─ 24 个是常量/通用值（qcom、arm64-v8a、release-keys…）
+  └─ 9 个才是真设备身份  ← 只有这些需要伪造
+```
+
+**为什么重要**：把工作量从"处理 85 个字段"缩到"精确定位 9 个属性"。
+
+### 🔬 发现 2：`ro.product.board` 与 `ro.board.platform` 是两个属性
+
+**这是本项目最值钱的一条。**
+
+真机上两个属性都存在、值都是 `lahaina`（骁龙 888）。看起来改一个就够：
+
+```bash
+getprop ro.product.board    → lahaina    # ← fekit 上报的是这个
+getprop ro.board.platform   → lahaina    # ← 大多数人 hook 的是这个
+```
+
+**结果**：自检显示"已伪装成 kalama"，实际上报**仍然是 lahaina**。
+
+服务端看到 `board=lahaina`（骁龙888）却 `model=PGT110`（骁龙8Gen3）——
+**这个组合物理上不存在，直接判定设备特征被篡改。**
+
+> 这个坑我们踩了两轮才发现在哪，详细复现过程见 [K54_ROOT_CAUSE.md](docs/K54_ROOT_CAUSE.md)
+
+### 🔬 发现 3：`http.agent` 在 zygote 里就定型了
+
+AOSP `RuntimeInit.commonInit()` 在 **fork 出应用进程时**就把 UA 算成静态字符串：
 
 ```java
-// frameworks/base/core/java/android/app/RuntimeInit.java
 System.setProperty("http.agent",
     "Dalvik/" + System.getProperty("java.vm.version")
     + " (Linux; U; Android " + Build.VERSION.RELEASE
     + "; " + Build.MODEL + " Build/" + Build.ID + ")");
 ```
 
-**它早于 Xposed 模块加载。**
+**这发生在 Xposed 模块加载之前** → 改 `Build.MODEL` 对它**完全无效**。
 
-所以：**改 `Build.MODEL` 字段对已缓存的 UA 完全无效** —— 这是很多人以为"已经伪装好了"却仍在泄露的原因。
+实测：**141 / 170 次 HTTP 请求（83%）** 把真机机型广播给了所有服务端。
 
-实测：**141 / 170 次 HTTP 请求（83%）把真机机型广播给所有 HTTP 服务端。**
+修复只需拦截 `System.getProperty("http.agent")` 重算，10 个读取点同时收敛。
 
-修复只需一处（拦截 `System.getProperty("http.agent")` 重算），10 个读取点同时收敛。
+### 🔬 发现 4：设备信息其实只走 4 个通道
 
-### 🔍 亮点 3：SoC 平台代号与机型的物理矛盾
+抓包 3 小时（539 MB → 过滤后 17.5 MB 纯上报流量）统计：
 
-QsecEst 上报的 85 个字段里，真正携带设备特征的只有 9 个。其中最隐蔽的一个：
+| # | 通道 | 泄露内容 | 是否加密 |
+|---|---|---|---|
+| 1 | **HTTP User-Agent** | `Dalvik/...; MODEL Build/ID)` | ❌ 明文 |
+| 2 | **QsecEst** | 85 字段（9 个真设备特征） | AES-128-CBC |
+| 3 | **MSF 长连接** | uin + QIMEI | 部分明文 |
+| 4 | **VOD_MSDK** | `androidDesc: BRAND_MODEL__SDK_VER` | ❌ 明文 |
+
+**其余 10+ 个 SDK（Bugly/RMonitor/Mars/Qimei…）虽然各自出网，但不上报新的设备维度。**
+
+### 🔬 发现 5：`/proc/cmdline` 泄露的最凶
 
 ```
-k54 = ro.board.platform = "lahaina"    ← 骁龙 888 (SM8350) 平台代号
-k57 = Build.MODEL       = "PGT110"     ← 骁龙 8 Gen 3 机型
+androidboot.project_codename=lemonadep     ← OnePlus 9 Pro 内部代号！
+androidboot.platform_name=SM8350
+androidboot.verifiedbootstate=orange       ← bootloader 已解锁
+androidboot.bootreason=reboot,PMIC_WD       ← 看门狗重启（异常）
+androidboot.type=nonrelease
 ```
 
-**`lahaina` 与任何非 SM8350 机型物理上不可能共存。**
+**`lemonadep` 直接把真机型号写在里面。** 现在净化 37 个 token。
 
-服务端一对照即知「设备改了机型名」→ **不会认作新设备**，直接按旧设备处理。
+### 🔬 发现 6：拦截本身才是异常信号
 
-这解释了一个反直觉现象：**换全套指纹后，登录反而不弹"新设备验证"了** —— 因为服务端根本不认为这是新设备。
+很多人第一反应是"拦住上报"。但 **"该发的不发"本身就是异常信号**。
 
-修复必须同时处理两处（读文件不等同读属性）：
-- 属性路径：`ro.board.platform` / `ro.chipname` / `ro.soc.model`
-- **文件路径**：`/proc/cpuinfo` 的 `Hardware:` / `Processor:` / `CPU part:` 行
+所以本项目提供观测模式：
 
-### 🔍 亮点 4：`__system_property_find` 是隐藏的第二个入口
-
-多数 native hook 只覆盖 `__system_property_get`，但腾讯的部分 SDK（PCDN/VOD）走的是：
-
-```c
-const prop_info* pi = __system_property_find(name);   // ← 常被漏掉
-__system_property_read_callback(pi, callback, cookie);
+```properties
+NETWORK_OBSERVE_ONLY=true    # 挂 hook 但放行，只记录
 ```
 
-**如果 `find` 未被 hook，`pi` 指向真实结构**，`read_callback` 里改值可能来不及（或调用方直接读结构体）。
+行为完全正常化，同时保留全部取证能力。
 
-本项目同时 hook 三个入口，并在 `find` 时记录 `pi → name` 映射供回调使用。
+### 🔬 发现 7：唯一能读到服务端裁决的接口
 
-### 🔍 亮点 5：Turing 走裸 syscall，只能从 deflate 层切入
+```java
+com.tencent.qqnt.kernelgpro.nativeinterface.GProGuildSafetyRisk
+  → getRiskLevel()    // 服务端下发的风险等级
+```
 
-`libturingxq.so` / `libturingmfa.so` 使用 `.real_syscall` —— **直接发起系统调用，绕过 libc**。
+**这是极少数能直接看到"服务端判了几级"的入口。** 项目加了只读观测：
 
-所以 `sendto` / `sendmsg` hook **抓不到它的任何流量**。
+```
+[RISK-OBSERVE] GProGuildSafetyRisk.getRiskLevel -> <等级>
+```
 
-本项目的解法：在 **`deflate` 压缩入口**做字节替换（`inject.txt` 规则），因为 Turing 上报前必然经过压缩。
+### 🔬 发现 8：账号维度不可解（诚实说明）
 
-### 🔍 亮点 6：拦截本身才是异常信号，所以做了观测模式
+**本项目解决的是设备维度。**
 
-很多人第一反应是"拦住上报"。但 **"该发的不发"本身就是异常信号** —— 服务端看到客户端突然不发心跳/不上报，反而更容易被标记。
-
-而且原实现有个坑：`ENABLE_NETWORK_INTERCEPT=false` 时 `hook()` 首行直接 `return`，**所有观测点全挂**，完全无法诊断。
-
-本项目拆成两个开关：
-
-| 开关 | 行为 |
-|---|---|
-| `ENABLE_NETWORK_INTERCEPT=true` | 挂 hook **并拦截** |
-| `NETWORK_OBSERVE_ONLY=true` | 挂 hook **但放行**（只记录）|
-
-观测模式下 QQ 行为完全正常化，同时保留全部取证能力。
-
-### 🔍 亮点 7：负面结果同样有价值 —— 三条加密通道都不可离线解
-
-如实记录：以下三条通道**无法离线解密**，唯一的实用路径是运行时 hook。
-
-| 通道 | 加密 | 结论 |
-|---|---|---|
-| MSF 8080 | SSO 会话密钥（握手协商） | 需在握手时抓 `SecureKey` |
-| Beacon 8081 | RSA-OAEP 包裹的 AES key | **私钥只在服务端** |
-| Bugly HTTP | AES-256-CBC，K=SHA256(keyStr) | 需 keyStr，但可由 appId 推导 |
-
-**用 132,804 个候选 appId 对 8080 帧爆破 → 0 命中**，反证它不是 Bugly 的产物。
-
-通用解法：hook `javax.crypto.Cipher.doFinal`，一网打尽所有本地加解密（同时看到 key / iv / 明文 / 密文）。
-
-### 🔍 亮点 8：账号维度不可解 —— 诚实说明边界
-
-**本项目解决的是设备维度。** 实测数据（同一套伪装环境）：
+实测（同一套伪装环境）：
 
 | 账号类型 | 存活时长 |
 |---|---|
-| 全新账号 | **9+ 小时**（稳定在线） |
+| 全新账号 | **9+ 小时** |
 | 已被标记账号 | 2h36m → 20min → 3min → **身份验证失败** |
 
-**每次重登都在加速降权，换指纹只能换来一次性窗口。**
-
-客户端能做的已经做到极致，剩下的在服务端账号评分里 —— **本地任何技术都无法重置**。
+**每次重登都在加速降权。** 客户端能做的已做到极致，剩下的在服务端账号评分里——
+**本地任何技术都无法重置**。
 
 把这个说清楚，比继续宣称"能绕过一切"更有价值。
 
 ---
 
-## 为什么有这个项目
-
-上游项目解决了 Java 层检测（Root / Xposed / 调试 / Pandora），但其 README 明确列出三类**未处理**的 Native 层检测：
-
-- `libfekit.so` — `/proc/self/maps` 扫描、Magisk/KernelSU 特征、ART CheckJNI 校验
-- `libturingxq.so` — ART 反射检测、ArtField 结构校验、传感器模拟器检测
-- `libMSFKernel.so` — APK 签名 MD5 校验
-
-本项目就是补上这一块。
-
----
-
-## 核心能力
+## 能力矩阵
 
 | 能力 | 说明 |
 |---|---|
-| **Native hook 框架** | ByteHook，30+ hook 点（上游无 native hook） |
-| **系统属性三入口** | `__system_property_get` / `read_callback` / `find` |
-| **内容级文件伪造** | 9 种 `/proc` 与 `/sys` 文件 |
-| **SoC 平台标识** | `ro.board.platform` + `/proc/cpuinfo` Hardware 行 |
-| **HTTP UA 重建** | 修复 zygote 静态缓存导致的真机机型泄露 |
-| **观测/拦截分离** | 行为正常化 + 完整取证 |
-| **Turing 明文注入** | deflate 层字节替换（绕过 `.real_syscall`） |
+| **Native hook 框架** | ByteHook inline hook，**30+ hook 点** |
+| **系统属性** | 三入口全覆盖：`get` / `read_callback` / `find`，**70+ 属性** |
+| **文件伪造** | 10 种 `/proc` 与 `/sys` 文件（含 cmdline 37 token 净化） |
+| **SoC 身份** | `ro.product.board` + `ro.board.platform` + `/proc/cpuinfo` 三处同步 |
+| **设备标识** | IMEI / AndroidID / Serial / OAID / QIMEI / SoC serial |
+| **Java 检测覆盖** | **13 个类 / 60+ 方法**（Root / Xposed / 调试 / 模拟器） |
+| **HTTP UA** | 运行时重算，修复 zygote 静态缓存 |
+| **Turing 注入** | deflate 层明文替换（绕过 `.real_syscall`） |
+| **懒加载重试** | 延迟加载的 SDK 类自动补齐 hook |
+| **观测模式** | 行为正常化 + 完整取证 |
+
+---
+
+## 证据链
+
+每个结论都有可复现的验证：
+
+| 验证 | 工具 | 结果 |
+|---|---|---|
+| 端到端检查 | `tools/verify_all2.py` | **[23/23 PASS](docs/VERIFY_REPORT.md)** |
+| 检测覆盖审计 | dex 全字符串池扫描 | [13 类 / 60+ 方法](docs/DETECTION_AUDIT.md) |
+| 暴露面审计 | `tools/audit_full.sh` | [7 大类完整清单](docs/EXPOSURE_AUDIT.md) |
+| QsecEst 加解密 | AES-128-CBC（已破解） | 85 字段全可见 |
+
+**验证的关键方法**：分三种视角，因为 root shell 和 untrusted_app 看到的是不同世界：
+
+| 视角 | 预期 | 实测 |
+|---|---|---|
+| 模块自检（QQ 进程内） | 伪造值 | `kalama` / `SM8650` / `green` ✅ |
+| 系统属性（root shell） | 真值 | `lahaina` / `SM8350` / `orange` ✅ |
+| SELinux 隔离 | 读不到 | QQ 读不到 `lspd` ✅ |
+
+**这个区分推翻了 3 个误报的"缺口"**，说明**审计方法本身也会出错**。
 
 ---
 
@@ -168,11 +200,10 @@ __system_property_read_callback(pi, callback, cookie);
 
 ### 环境要求
 
-- Android 8.0+（API 26+）
-- KernelSU 或 Magisk
-- LSPosed / Vector
-- NDK 27.3.13750724
-- JDK 21 + Gradle 8.5+
+```
+Android 8.0+  ·  KernelSU/Magisk  ·  LSPosed/Vector
+NDK 27.3.13750724  ·  JDK 21  ·  Gradle 8.5+
+```
 
 ### 编译
 
@@ -185,19 +216,23 @@ gradlew.bat assembleDebug
 JAVA_HOME=/path/to/jdk ./gradlew assembleDebug
 ```
 
-### 安装
+### 部署
 
 ```bash
 adb install -r app/build/outputs/apk/debug/app-debug.apk
 adb push qqguard.conf.example /data/local/tmp/qqguard.conf
-# 编辑配置填入你的身份值
+# 编辑配置，填入你自己的身份值
 adb shell am force-stop com.tencent.mobileqq
 adb shell am start -n com.tencent.mobileqq/.activity.SplashActivity
 ```
 
-### 配置
+### 验证
 
-参考 [qqguard.conf.example](qqguard.conf.example)，关键点：
+```bash
+python -X utf8 tools/verify_all2.py     # 23 项端到端检查
+```
+
+### 核心配置
 
 ```properties
 ENABLE_NATIVE_HOOKS=true
@@ -205,10 +240,9 @@ ENABLE_DEVICE_SPOOF=true
 
 # 机型画像（必须整套自洽）
 ENV_MODEL=<MODEL>
-ENV_DEVICE=<BRAND_MODEL>
 ENV_FINGERPRINT=<BRAND>/<PRODUCT>/<DEVICE>:<RELEASE>/<BUILD_ID>/<INCREMENTAL>:user/release-keys
 
-# SoC 必须与机型匹配（★ 最容易漏）
+# SoC 必须与机型匹配 ★ 最容易漏
 ENV_SOC_PLATFORM=kalama
 
 # 观测模式（推荐）
@@ -218,94 +252,27 @@ NETWORK_OBSERVE_ONLY=true
 **自洽校验规则**：
 ```
 FINGERPRINT == BRAND/PRODUCT/DEVICE:RELEASE/BUILD_ID/INCREMENTAL:user/release-keys
-DISPLAY 必须包含 MODEL
-IMEI 必须 Luhn 有效
-SoC 平台必须与机型匹配
+DISPLAY 必须含 MODEL
+IMEI 必须 Luhn 校验通过
+SoC 平台代号必须与机型匹配    ← 最容易漏，也是最早的暴露点
 ```
+
+完整配置见 [qqguard.conf.example](qqguard.conf.example)。
 
 ---
 
-## 验证
+## 已知限制（不粉饰）
 
-### Native hook 是否生效
-
-```bash
-adb logcat -s QQNativeBypass:V | grep -E "All Native Hooks|Self-test"
-```
-
-预期：
-```
-QQNativeBypass: === Native Bypass Library Loaded ===
-QQNativeBypass: ByteHook initialized (AUTOMATIC mode)
-QQNativeBypass: Self-test ro.build.fingerprint='...'
-QQNativeBypass: Self-test soc_serial='...'
-QQNativeBypass: === All Native Hooks Installed Successfully ===
-```
-
-### UA 是否已修正
-
-```bash
-adb logcat -s QQNativeBypass:V | grep "http.agent"
-```
-
-### 抓包复核
-
-```bash
-adb shell "tcpdump -i any -n -s 0 -w /data/local/tmp/ua.pcap 'tcp port 80' &"
-# 触发 HTTP 请求
-adb pull /data/local/tmp/ua.pcap
-strings ua.pcap | grep -E "User-Agent|Dalvik"
-```
-
----
-
-## 已知限制
-
-### 1. MMKV hook 会导致崩溃循环
-
-```
-MMKV::set hook installed → 5-6 秒后进程死亡 → 无限重启
-```
-
-根因：`bytehook_hook_single` 对 libmmkv 的 `set` 系列 inline hook 时，trampoline 破坏了库内部状态。
-**即使纯观测不改写也会崩** —— 问题在 hook 本身。
-
-**默认禁用**。
-
-**附**：`libmmkv.so` 从 base.apk 直接 mmap 加载，**不在 dlopen 命名空间**，`dlopen("libmmkv.so", RTLD_NOLOAD)` 返回 NULL，必须先 `dl_iterate_phdr` 取真实路径。
-
-### 2. `prctl` hook 必须关闭
-
-QQ 会自检 `PR_SET_DUMPABLE`，发现被拦后**直接自杀**（`VM exiting with result code 0`）。
-
-### 3. Turing 走裸 syscall
-
-`libturingxq.so` 使用 `.real_syscall` 绕过 libc，`sendto`/`sendmsg` hook 抓不到。
-改用 `deflate` 层注入明文。
-
-### 4. 账号维度无法本地解决
-
-**必须说清楚**：本项目解决的是**设备维度**。
-
-实测（同一套伪装环境）：
-
-| 账号类型 | 存活时长 |
-|---|---|
-| 全新账号 | **9+ 小时** |
-| 已被标记账号 | 2h36m → 20min → 3min → 身份验证失败 |
-
-**客户端能做的已做到极致，剩下的在服务端账号评分里，本地技术无法重置。**
-
-### 5. 加密未破解部分
-
-| 通道 | 加密 | 可解性 |
+| # | 限制 | 说明 |
 |---|---|---|
-| QsecEst | AES-128-CBC | ✅ |
-| MSF 8080 | SSO 会话密钥 | ❌ 需运行时抓取 |
-| Beacon 8081 | RSA 包裹 AES key | ❌ 私钥在服务端 |
-| Bugly HTTP | AES-256-CBC | ⚠️ 需 keyStr |
+| 1 | **账号维度不可解** | 服务端评分累积，本地技术无法重置 |
+| 2 | **MMKV hook 会崩** | 已禁用；纯观测实现也会崩，问题在 hook 本身 |
+| 3 | **`prctl` hook 必须关** | QQ 自检会让它自杀（`VM exiting code 0`） |
+| 4 | **Turing 走裸 syscall** | `.real_syscall` 绕过 libc，只能从 deflate 切入 |
+| 5 | **三条通道不可离线解** | MSF(SSO密钥) / Beacon(RSA) / Bugly(需 keyStr) |
+| 6 | **物理锚改不了** | KeyStore TEE attestation、boot_id |
 
-通用解法：hook `javax.crypto.Cipher.doFinal`。
+详见 [EXPOSURE_AUDIT.md](docs/EXPOSURE_AUDIT.md)。
 
 ---
 
@@ -313,23 +280,20 @@ QQ 会自检 `PR_SET_DUMPABLE`，发现被拦后**直接自杀**（`VM exiting w
 
 ```
 app/src/main/cpp/
-├── native-bypass.cpp              # 入口，JNI_OnLoad
+├── native-bypass.cpp            # JNI 入口
 ├── hooks/
-│   ├── hook_libc.cpp              # 主体：文件/属性/环境（1900+ 行）
-│   ├── hook_libfekit.cpp          # fekit 专属
-│   ├── hook_libturingxq.cpp       # Turing 专属
-│   └── hook_libmsf.cpp            # MSF 专属
+│   ├── hook_libc.cpp            # 主体 1900+ 行（文件/属性/SoC/加密）
+│   ├── hook_libfekit.cpp        # fekit 专属
+│   ├── hook_libturingxq.cpp     # Turing 专属
+│   └── hook_libmsf.cpp          # MSF 专属
 └── utils/log.cpp
 
 app/src/main/java/io/github/kida/qqnativeguard/
-├── NativeBypass.java              # JNI 桥
-├── XposedEntry.java               # 入口
-├── config/HookConfig.java         # 配置
 ├── hooks/
-│   ├── DeviceInfoHook.java        # 设备信息 + http.agent
-│   ├── NetworkReportHook.java     # 上报观测/拦截
-│   ├── RootDetectionHook.java
-│   ├── XposedDetectionHook.java
+│   ├── DeviceInfoHook.java      # 设备信息 + http.agent 重算
+│   ├── NetworkReportHook.java   # 上报观测/拦截
+│   ├── RootDetectionHook.java   # Root 检测 + 懒加载重试
+│   ├── XposedDetectionHook.java # Xposed 痕迹
 │   ├── DebugDetectionHook.java
 │   └── RuntimeMonitorHook.java
 └── utils/
@@ -337,31 +301,45 @@ app/src/main/java/io/github/kida/qqnativeguard/
 
 ---
 
+## 文档
+
+| 文档 | 内容 |
+|---|---|
+| [K54_ROOT_CAUSE.md](docs/K54_ROOT_CAUSE.md) | ★ `ro.product.board` vs `ro.board.platform` 完整复现 |
+| [VERIFY_REPORT.md](docs/VERIFY_REPORT.md) | 23 项验证结果 |
+| [DETECTION_AUDIT.md](docs/DETECTION_AUDIT.md) | dex 扫描方法与 13 个已覆盖类 |
+| [EXPOSURE_AUDIT.md](docs/EXPOSURE_AUDIT.md) | 7 大类暴露面完整清单 |
+| [SETUP_REPORT.md](docs/SETUP_REPORT.md) | 搭建过程与 10 个踩坑记录 |
+
+---
+
 ## 致谢
 
-- **[Xalsace/QQEnhancedBypass](https://github.com/Xalsace/QQEnhancedBypass)** — Java 层检测绕过基础（GPL-3.0）
-- **[jhl337/QQNTHookBypass](https://github.com/jhl337/QQNTHookBypass)** — 更早的探索与检测机制分析
-- **[ByteHook](https://github.com/bytedance/android-inline-hook)** — 字节跳动 inline hook 框架（Apache-2.0）
+| 项目 | 贡献 |
+|---|---|
+| [Xalsace/QQEnhancedBypass](https://github.com/Xalsace/QQEnhancedBypass) | Java 层检测绕过基础（GPL-3.0） |
+| [jhl337/QQNTHookBypass](https://github.com/jhl337/QQNTHookBypass) | 早期检测机制分析 |
+| [ByteHook](https://github.com/bytedance/android-inline-hook) | inline hook 框架（Apache-2.0） |
 
-原始版权归各自作者所有。本项目的增量部分同样以 GPL-3.0 发布。
+原始版权归各自作者。本项目增量部分同样 GPL-3.0，修改声明见 [NOTICE](NOTICE)。
 
 ---
 
 ## 许可证
 
-**GNU General Public License v3.0** —— 继承上游许可，详见 [LICENSE](LICENSE)。
+**GNU General Public License v3.0** — 继承上游，详见 [LICENSE](LICENSE)。
 
-- ✅ 可以自由使用、修改、分发
-- ⚠️ 衍生作品必须同样以 GPL-3.0 开源
-- ⚠️ 必须保留原作者版权声明
+- ✅ 自由使用、修改、分发
+- ⚠️ 衍生作品必须同样 GPL-3.0 开源
+- ⚠️ 必须保留原作者版权
 - ⚠️ 必须声明修改内容
-
-详见 [NOTICE](NOTICE)。
 
 ---
 
 ## 免责声明
 
-仅供**安全研究**与**个人设备环境定制**使用。
+仅供**安全研究**与**个人设备环境定制**。
 
-使用者应自行确认所在地区的法律法规，并对使用后果负责。作者不对任何账号封禁、数据丢失或其他损害承担责任。
+使用者自行确认所在地区法律法规，并对使用后果负责。作者不对账号封禁、数据丢失或其他损害承担责任。
+
+**这个项目不承诺"能绕过一切"——它承诺的是"每个结论都有实测证据"。**
