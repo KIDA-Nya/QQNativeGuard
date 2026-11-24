@@ -73,7 +73,7 @@ androidboot.platform_name=SM8350           ← ★ SM8350 真机平台
 androidboot.type=nonrelease                ← 非发布版
 androidboot.bootreason=reboot,PMIC_WD      ← 看门狗重启（异常）
 androidboot.prjname=19815                  ← 真机项目号
-androidboot.serialno=5bbffc1b              ← 真机序列号
+androidboot.serialno=<real-serial>              ← 真机序列号
 ```
 
 **`project_codename=lemonadep` 是最致命的**：`lemonadep` 是 OnePlus 9 Pro 的内部代号，与伪造的 `PGT110`（OPPO Find X7）**直接矛盾**。

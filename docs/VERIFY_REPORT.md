@@ -46,7 +46,7 @@
 | `ro.soc.model` | **SM8650** | SM8350 | ✅ |
 | `soc_serial` | **<soc>** | 1539308571 | ✅ |
 | `ro.boot.verifiedbootstate` | **green** | orange | ✅ |
-| `ro.serialno` | **<serial>** | 5bbffc1b | ✅ |
+| `ro.serialno` | **<serial>** | <real-serial> | ✅ |
 
 **这解决了 k54 破绽**：之前 `k54=lahaina` 与伪造机型 `PGT110` 矛盾，现在一致。
 
