@@ -45,7 +45,7 @@ public class XposedDetectionHook {
         "com.rifsx.susfs",
         "org.sukisu.manager",
         // 改机 / 多开 / 修改器 / 自动化
-        "bin.mt.plus",
+        // "bin.mt.plus" 不列入：MT 管理器是正常工具，且用户要求保持可见（硬约束）
         "com.mekhontsev.magicdesk",
         "com.lbe.parallel",
         "com.parallel.space",
@@ -63,7 +63,7 @@ public class XposedDetectionHook {
         "com.scriptelf",
         "com.np.manager",
         // 远控
-        "com.netease.uuremote",
+        // "com.netease.uuremote" 不列入：UU远程是正常工具，且用户要求保持可见（硬约束）
         "com.oray.sunlogin",
         "com.teamviewer",
         // 代理 / 抓包

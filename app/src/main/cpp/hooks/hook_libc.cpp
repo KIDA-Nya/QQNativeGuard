@@ -601,6 +601,8 @@ enum FakeKind {
     // 实测本机 /proc/<pid>/net/unix 里能看到 `/lspd`（LSPosed daemon 的
     // abstract socket），这是 libc 层唯一还没堵的 root 框架指纹。
     FK_NET_UNIX,
+    // 【V9】/proc/<other_pid>/cmdline：QQ 可扫其他进程名看到 magiskd/ksud。
+    FK_PROC_CMDLINE,
 };
 
 static bool ends_with(const char* s, const char* suffix) {
@@ -621,6 +623,19 @@ static bool is_self_proc_path(const char* p) {
     return strncmp(p, prefix, strlen(prefix)) == 0;
 }
 
+static bool is_root_process_name(const char* s) {
+    if (!s || !s[0]) return false;
+    static const char* names[] = {
+        "magiskd", "magisk", "ksud", "kernelsu", "apd", "apatch",
+        "daemonsu", "su", "supersu", "shamiko", "lspd", "lsposed",
+        "vectord", "zygiskd", nullptr
+    };
+    for (int i = 0; names[i]; i++) {
+        if (strcmp(s, names[i]) == 0) return true;
+    }
+    return false;
+}
+
 static FakeKind classify_path(const char* p) {
     if (!p) return FK_NONE;
 
@@ -629,6 +644,15 @@ static FakeKind classify_path(const char* p) {
         if (ends_with(p, "/smaps")) return FK_SMAPS;
         if (ends_with(p, "/mountinfo")) return FK_MOUNTINFO;
         if (ends_with(p, "/net/unix")) return FK_NET_UNIX;
+    // /proc/<数字>/cmdline（注意排除 /proc/self/ 和 /proc/<自己的pid>/，
+    // 那些走别的分支处理）
+    if (ends_with(p, "/cmdline")) {
+        const char* c = strstr(p, "/proc/");
+        if (c) {
+            const char* q = c + 6;
+            if (*q >= '0' && *q <= '9') return FK_PROC_CMDLINE;
+        }
+    }
         if (ends_with(p, "/status") && is_self_proc_path(p)) return FK_STATUS;
     }
     if (strcmp(p, "/proc/bootconfig") == 0) return FK_BOOTCONFIG;
@@ -704,6 +728,38 @@ static void sanitize_cmdline(std::string& s) {
         replace_token_value(s, "androidboot.bootreason=", "reboot");
         replace_token_value(s, "androidboot.verifiedbootstate=", "green");
         replace_token_value(s, "androidboot.flash.locked=", "1");
+
+        // 【V8 补全】以下 token 实测存在于 /proc/cmdline，会暴露真机身份。
+        // 尤其 project_codename=lemonadep 直接等于 OnePlus 9 Pro 代号，
+        // 与任何伪造机型矛盾；platform_name=SM835 同理。
+        replace_token_value(s, "androidboot.project_codename=", "pgem10");
+        replace_token_value(s, "androidboot.platform_name=", "SM8650");
+        replace_token_value(s, "androidboot.platform_id=", "0");
+        replace_token_value(s, "androidboot.prjname=", "0");
+        replace_token_value(s, "androidboot.hw_version=", "0");
+        replace_token_value(s, "androidboot.rf_version=", "0");
+        replace_token_value(s, "androidboot.prj_version=", "0");
+        replace_token_value(s, "androidboot.secboot=", "enabled");
+        replace_token_value(s, "androidboot.at_location=", "factory");
+        replace_token_value(s, "androidboot.rpmb_enable=", "true");
+        replace_token_value(s, "androidboot.prmec=", "true");
+        replace_token_value(s, "androidboot.opcarrier=", "none");
+        replace_token_value(s, "androidboot.bootcount=", "");
+        replace_token_value(s, "androidboot.power_cut_test=", "");
+        replace_token_value(s, "androidboot.cust=", "");
+        replace_token_value(s, "androidboot.startupmode=", "reboot");
+        replace_token_value(s, "androidboot.mode=", "normal");
+        replace_token_value(s, "androidboot.force_normal_boot=", "1");
+        replace_token_value(s, "androidboot.slot_suffix=", "_a");
+        replace_token_value(s, "lk_version=", "V1.0");
+        replace_token_value(s, "buildvariant=", "user");
+        replace_token_value(s, "smooth_soc_switch=", "");
+        replace_token_value(s, "saupwk.en=", "1");
+        // OPPO 特有参数，伪造机型必须保留但去掉真机项目号
+        replace_token_value(s, "phx_rus_conf.main_on=", "1");
+        replace_token_value(s, "phx_rus_conf.recovery_method=", "2");
+        replace_token_value(s, "phx_rus_conf.kernel_time=", "0");
+        replace_token_value(s, "phx_rus_conf.android_time=", "0");
     }
 }
 
@@ -767,6 +823,25 @@ static bool build_fake_content(FakeKind kind, const char* path, std::string& out
             out = filter_lines(real);
             LOGI("filtered %s: %zu -> %zu bytes", path, real.size(), out.size());
             return true;
+        }
+
+        case FK_PROC_CMDLINE: {
+            // 【V9 最简方案】读其他进程的 cmdline 时，若进程名是 root 框架，
+            // 返回空内容（QQ 看到空 = 该进程名不可见）。
+            // 不做复杂伪造：普通进程原样返回，只有 root 进程被抹掉。
+            std::string real;
+            if (!read_real_file(path, real)) return false;
+
+            // cmdline 是 NUL 分隔的，取第一段作为进程名
+            size_t nul = real.find('\0');
+            std::string name = (nul == std::string::npos) ? real : real.substr(0, nul);
+
+            if (is_root_process_name(name.c_str())) {
+                LOGI("PROC-CMDLINE hidden: %s -> [%s]", path, name.c_str());
+                out.clear();   // 返回空
+                return true;
+            }
+            return false;      // 非 root 进程：走原始路径，零开销
         }
 
         case FK_STATUS: {
@@ -1133,6 +1208,10 @@ static bool is_hidden_path(const char* p) {
     }
     return false;
 }
+
+// 【V8 补全】进程列表过滤：QQ 可扫 /proc/<pid>/cmdline 看到 root 管理进程。
+// 通过 open/openat 打开 /proc/<pid>/cmdline 时，记下 fd；read/fgets 时返回伪造内容。
+
 
 static int fake_access(const char* pathname, int mode) {
     BYTEHOOK_STACK_SCOPE();
@@ -2118,6 +2197,29 @@ void install_hooks() {
 
     if (g_env_on) {
         char ebuf[128] = {0};
+        // 【V9】SoC 平台自检：确认 QQ 进程内看到的是伪造值
+        // 这一项之前无自检，导致无法判断 hook 是否真生效（k54 破绽的教训）
+        {
+            char socbuf2[64] = {0};
+            __system_property_get("ro.board.platform", socbuf2);
+            LOGI("Self-test ro.board.platform='%s' (fake target='kalama')", socbuf2);
+            char socm[64] = {0};
+            __system_property_get("ro.soc.model", socm);
+            LOGI("Self-test ro.soc.model='%s' (fake target='SM8650')", socm);
+            // /proc/cpuinfo 的 Hardware 行（走 FakeKind 路径）
+            FILE* cf = fake_fopen("/proc/cpuinfo", "r");
+            if (cf) {
+                char line[256];
+                while (fgets(line, sizeof(line), cf)) {
+                    if (strncmp(line, "Hardware", 8) == 0) {
+                        LOGI("Self-test /proc/cpuinfo %s", line);
+                        break;
+                    }
+                }
+                fclose(cf);
+            }
+        }
+
         __system_property_get("ro.build.version.release", ebuf);
         LOGI("Self-test env release='%s' (target='%s')", ebuf, g_env[0]);
         __system_property_get("ro.build.version.sdk", ebuf);
