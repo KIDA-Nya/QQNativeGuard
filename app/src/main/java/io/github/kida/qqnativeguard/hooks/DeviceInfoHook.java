@@ -35,6 +35,7 @@ public class DeviceInfoHook {
     private static String cachedSerial = null;
     private static String cachedAndroidId = null;
     private static boolean qimeiFakeLogged = false;
+    private static boolean ssidOriginLogged = false;
     private static boolean osPropLogged = false;
     private static boolean httpAgentLogged = false;
     private static boolean msfQimeiLogged = false;
@@ -323,8 +324,69 @@ public class DeviceInfoHook {
                 HookConfig.getClassLoader());
             XposedBridge.hookAllMethods(wifiInfo, "getMacAddress", macHook);
             XposedBridge.hookAllMethods(wifiInfo, "getBSSID", macHook);
+
+            // 【V12】SSID 也要处理。
+            // 依据：Turing devicetoken_report 配置里 "wifissid":"1" 表示会上报，
+            // 而之前只 hook 了 MAC/BSSID，真实 SSID 一直是明文出去的。
+            final String fakeSsid = HookConfig.FAKE_WIFI_SSID;
+            if (fakeSsid != null && !fakeSsid.isEmpty()) {
+                XC_MethodHook ssidHook = new XC_MethodHook() {
+                    @Override
+                    protected void afterHookedMethod(MethodHookParam param) throws Throwable {
+                        Object r = param.getResult();
+                        // 只替换真实 SSID，保留 null / <unknown ssid> 这类系统值
+                        if (r instanceof String) {
+                            String v = (String) r;
+                            if (!v.isEmpty() && !v.contains("unknown")) {
+                                // 【验证】记录原始值，证明 hook 真的拦到了
+                                if (!ssidOriginLogged) {
+                                    ssidOriginLogged = true;
+                                    XposedEntry.log("[SSID] origin=" + v
+                                        + " -> fake=" + fakeSsid);
+                                }
+                                // Android 的 getSSID 返回带引号的值
+                                param.setResult("\"" + fakeSsid + "\"");
+                            }
+                        }
+                    }
+                };
+                XposedBridge.hookAllMethods(wifiInfo, "getSSID", ssidHook);
+                XposedEntry.log("WifiInfo SSID forced: " + fakeSsid);
+            }
         } catch (Throwable t) {
             XposedEntry.log("WifiInfo MAC hook failed: " + t.getMessage());
+        }
+
+        // 【V12】ScanResult.SSID：扫描列表里也有 SSID
+        try {
+            final String fakeSsid2 = HookConfig.FAKE_WIFI_SSID;
+            if (fakeSsid2 != null && !fakeSsid2.isEmpty()) {
+                Class<?> wm = XposedHelpers.findClass("android.net.wifi.WifiManager",
+                    HookConfig.getClassLoader());
+                XposedBridge.hookAllMethods(wm, "getScanResults", new XC_MethodHook() {
+                    @Override
+                    protected void afterHookedMethod(MethodHookParam param) throws Throwable {
+                        Object r = param.getResult();
+                        if (!(r instanceof java.util.List)) return;
+                        java.util.List<?> list = (java.util.List<?>) r;
+                        // 只保留一项，且 SSID 改成伪造值，避免暴露周边网络环境
+                        java.util.List<Object> kept = new java.util.ArrayList<>();
+                        for (Object item : list) {
+                            if (item == null) continue;
+                            try {
+                                java.lang.reflect.Field f = item.getClass()
+                                    .getField("SSID");
+                                f.set(item, fakeSsid2);
+                            } catch (Throwable ignored) {
+                            }
+                            kept.add(item);
+                            if (kept.size() >= 3) break;
+                        }
+                        if (!kept.isEmpty()) param.setResult(kept);
+                    }
+                });
+            }
+        } catch (Throwable ignored) {
         }
         try {
             Class<?> bt = XposedHelpers.findClass("android.bluetooth.BluetoothAdapter",

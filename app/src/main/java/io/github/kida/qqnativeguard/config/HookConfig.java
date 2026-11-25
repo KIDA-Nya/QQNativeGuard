@@ -103,6 +103,9 @@ public class HookConfig {
      *  依据：GUID 从存储读取无效，只能 hook 函数返回此值 */
     public static String FAKE_WLOGIN_GUID = null;
 
+    /** 【V12】WiFi SSID 伪造值（Turing devicetoken_report 会上报 wifissid） */
+    public static String FAKE_WIFI_SSID = null;
+
     // OPPO OAID（com.heytap.openid 返回的匿名设备 ID）
     public static String FAKE_OAID = null;
 
@@ -193,6 +196,7 @@ public class HookConfig {
                 ROM_BUILD_FINGERPRINT = getString(props, "ROM_BUILD_FINGERPRINT", ROM_BUILD_FINGERPRINT);
                 FAKE_QIMEI36 = getString(props, "FAKE_QIMEI36", FAKE_QIMEI36);
         FAKE_WLOGIN_GUID = getString(props, "FAKE_WLOGIN_GUID", FAKE_WLOGIN_GUID);
+        FAKE_WIFI_SSID = getString(props, "FAKE_WIFI_SSID", FAKE_WIFI_SSID);
                 FAKE_OAID = getString(props, "FAKE_OAID", FAKE_OAID);
                 ENV_SPOOF = getBool(props, "ENV_SPOOF", ENV_SPOOF);
                 ENV_RELEASE = getString(props, "ENV_RELEASE", ENV_RELEASE);
