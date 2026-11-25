@@ -54,6 +54,17 @@ static bool g_env_on = false;
 static bool g_nofilter_maps = false;
 static char g_env[19][256];
 
+/**
+ * ro.product.first_api_level —— 设备首次上市时的 API 级别。
+ *
+ * 这是一个「机型强指纹」：它与 model 一起被 fekit 读取上报，
+ * 只有两者匹配才自洽。真机 LE2123 是 30（Android 11 首发），
+ * 伪造的 PGT110（OPPO Find X7，2024 年，Android 14）应为 34。
+ *
+ * 实测来源：libfekit 的 FKCALL 记录里该属性长期 act=real。
+ */
+static char g_first_api_level[8] = "34";
+
 // 调用者归因开关（观测用，默认开；deep=对 libc 中转层做帧指针回溯）
 static bool g_attr_on = false;
 static bool g_attr_deep = false;
@@ -1316,6 +1327,20 @@ static const char* fake_prop_value(const char* name) {
         if (strcmp(name, "ro.build.version.all_codenames") == 0) return "REL";
         if (strcmp(name, "ro.build.version.preview_sdk") == 0) return "0";
         if (strcmp(name, "ro.build.version.preview_sdk_int") == 0) return "0";
+
+        // 【2026-11-26】first_api_level 是强指纹，必须与机型一起对齐。
+        // 实测依据：开启 ATTR_PROBE/ATTR_DEEP 后，libfekit 的 FKCALL 记录显示
+        //   act=real prop=ro.product.first_api_level   ← 一直泄露真机值
+        // 真机 LE2123 = 30（Android 11 首发），而伪造的 PGT110（OPPO Find X7，
+        // 2024 年上市，Android 14）应为 34。两者相差 4 代，
+        // 服务端把 model 与 first_api_level 一对即判定矛盾。
+        if (strcmp(name, "ro.product.first_api_level") == 0 ||
+            strcmp(name, "ro.product.vendor.first_api_level") == 0 ||
+            strcmp(name, "ro.product.system.first_api_level") == 0 ||
+            strcmp(name, "ro.product.odm.first_api_level") == 0 ||
+            strcmp(name, "ro.product.product.first_api_level") == 0) {
+            return g_first_api_level;
+        }
 
         // 机型画像
         if (strcmp(name, "ro.product.model") == 0 ||
