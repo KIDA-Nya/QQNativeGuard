@@ -8,7 +8,10 @@
 |---|---|---|---|
 | **1** | **[README.md](README.md)** | ★ **技术总纲（跨会话必读）**：项目概况/5通道/4种下线/证据分级/10条教训 | 2026-11-25 |
 | **2** | **[important.md](important.md)** | ★ **复盘核查报告**：实机验证结果 + 发现的2个问题 | 2026-11-25 |
-| 3 | [EVIDENCE_LEVELS.md](EVIDENCE_LEVELS.md) | 证据分级 A/B/C/D，区分「已验证」与「推断」 | 2026-11-25 |
+| 3 | [TURING_REPORT_FIELDS.md](TURING_REPORT_FIELDS.md) | ★ Turing 配置揭示的上报字段清单（发现 wifissid 缺口） | 2026-11-25 |
+| 4 | [RE_NATIVE_MEMORY.md](RE_NATIVE_MEMORY.md) | ★ libnative-memory 逆向：未启用的 APM（修正误判） | 2026-11-25 |
+| 5 | [QIMEI_VERIFICATION.md](QIMEI_VERIFICATION.md) | ★ QIMEI 通道验证（落盘证据 + libqimei 逆向） | 2026-11-25 |
+| 6 | [EVIDENCE_LEVELS.md](EVIDENCE_LEVELS.md) | 证据分级 A/B/C/D，区分「已验证」与「推断」 | 2026-11-25 |
 | 4 | [CORRECTIONS.md](CORRECTIONS.md) | 9 个被证伪的结论 + 3 个被修正的判断 | 2026-11-25 |
 | 5 | [GUID_SOURCE_EXPERIMENT.md](GUID_SOURCE_EXPERIMENT.md) | 三次单变量实验（方法论范本） | 2026-11-25 |
 | 6 | [GUID_FAKE_IMPLEMENTED.md](GUID_FAKE_IMPLEMENTED.md) | GUID 伪造实现细节 | 2026-11-25 |
