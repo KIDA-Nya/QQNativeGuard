@@ -82,6 +82,13 @@ public class XposedEntry implements IXposedHookLoadPackage {
                 + " fakeSerial=" + HookConfig.FAKE_SERIAL
                 + " logFile=" + (HookConfig.LOG_FILE == null ? "null" : HookConfig.LOG_FILE));
 
+            // 行为自检：只跑主进程，延迟 10 秒等 Application 就绪。
+            // 目的不是日志，而是实际调用被 hook 的方法并落盘结果，
+            // 用来验证「hook 生效后行为正确」而不只是「hook 装上」。
+            if (TARGET_PACKAGE.equals(lpparam.processName)) {
+                SelfTest.schedule();
+            }
+
         } catch (Throwable t) {
             log("Error during hook initialization: " + t.getMessage());
             t.printStackTrace();
