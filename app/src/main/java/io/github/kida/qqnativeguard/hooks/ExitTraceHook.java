@@ -12,6 +12,7 @@ import de.robv.android.xposed.XC_MethodHook;
 import de.robv.android.xposed.XposedHelpers;
 import de.robv.android.xposed.callbacks.XC_LoadPackage;
 import io.github.kida.qqnativeguard.XposedEntry;
+import io.github.kida.qqnativeguard.config.HookConfig;
 import io.github.kida.qqnativeguard.utils.HookUtils;
 
 /**
@@ -69,8 +70,81 @@ public final class ExitTraceHook {
         // ---- 4. SystemMethodProxy：57 个调用者的统一入口 ----
         hookWrapper("com.tencent.mobileqq.perf.block.SystemMethodProxy", "killProcess");
 
+        // ---- 5d. isGuardState 的返回值（降级的前置条件）----
+        try {
+            HookUtils.hookAllMethods("com.tencent.mobileqq.app.guard.GuardManager",
+                "isGuardState", new XC_MethodHook() {
+                    @Override
+                    protected void afterHookedMethod(MethodHookParam param) throws Throwable {
+                        try {
+                            Object mgr = param.thisObject;
+                            int sid = XposedHelpers.getIntField(mgr, "mStateId");
+                            Object r = param.getResult();
+                            String s = "[IS-GUARD] stateId=" + sid + " -> " + r;
+                            XposedEntry.log(s);
+                            dump("=== " + s + " ===\n");
+                        } catch (Throwable ignored) {
+                        }
+                    }
+                });
+        } catch (Throwable ignored) {
+        }
+
+        // ---- 5c. 各 GuardState 子类的 onEnter（确定是否真的进入过某状态）----
+        for (final String sc : new String[]{
+                "LiteUnguard", "LiteGuard", "BackgroundUnguard", "BackgroundGuard",
+                "ForgroundOther", "ForgroundMain", "PrestartGuard", "GuardState"}) {
+            try {
+                HookUtils.hookAllMethods("com.tencent.mobileqq.app.guard." + sc,
+                    "onEnter", new XC_MethodHook() {
+                        @Override
+                        protected void beforeHookedMethod(MethodHookParam param) throws Throwable {
+                            Object a0 = param.args.length > 0 ? param.args[0] : null;
+                            String s = "[STATE-ENTER] " + sc + " arg=" + a0;
+                            XposedEntry.log(s);
+                            dump("=== " + s + " ===\n");
+                        }
+                    });
+            } catch (Throwable ignored) {
+            }
+        }
+
         // ---- 5. 状态机采样：算出距离自杀还有多少拍 ----
         hookGuardStateMachine();
+
+        // ---- 5b. handleMessage 的 what 值（定位降级消息编号）----
+        try {
+            HookUtils.hookAllMethods("com.tencent.mobileqq.app.guard.GuardManager",
+                "handleMessage", new XC_MethodHook() {
+                    @Override
+                    protected void beforeHookedMethod(MethodHookParam param) throws Throwable {
+                        try {
+                            Object a0 = param.args.length > 0 ? param.args[0] : null;
+                            if (a0 == null) return;
+                            int what = XposedHelpers.getIntField(a0, "what");
+                            int arg1 = XposedHelpers.getIntField(a0, "arg1");
+                            Object obj = XposedHelpers.getObjectField(a0, "obj");
+                            // 只记录非 TICK(5) 的消息，避免每 12 秒刷一条
+                            if (what == 5) return;
+                            Object mgr = param.thisObject;
+                            int sid = -1;
+                            try {
+                                sid = XposedHelpers.getIntField(mgr, "mStateId");
+                            } catch (Throwable ignored) {
+                            }
+                            String s = "[HANDLE-MSG] what=" + what + " arg1=" + arg1
+                                    + " obj=" + obj + " stateId=" + sid;
+                            XposedEntry.log(s);
+                            dump("=== " + s + " ===\n");
+                        } catch (Throwable ignored) {
+                        }
+                    }
+                });
+        } catch (Throwable ignored) {
+        }
+
+        // ---- 6. 一次性 dump 状态 ID 映射 ----
+        scheduleStateIdDump();
 
         XposedEntry.log("[EXIT-TRACE] installed");
     }
@@ -274,6 +348,115 @@ public final class ExitTraceHook {
                     }
                 });
         } catch (Throwable ignored) {
+        }
+    }
+
+    /**
+     * 一次性 dump 状态 ID -> 类名。
+     *
+     * GuardManager 有静态字段 INSTANCE，拿实例后调 getState(0..7)，
+     * 把类名写进日志，从此 id 映射不再需要靠反汇编猜。
+     */
+    private static void scheduleStateIdDump() {
+        // NAME_STATE / NAME_EVENT 是静态字段，不等实例，立即读
+        try {
+            Class<?> gsCls = Class.forName(
+                    "com.tencent.mobileqq.app.guard.GuardState",
+                    false, HookConfig.getClassLoader());
+            Object so = XposedHelpers.getStaticObjectField(gsCls, "NAME_STATE");
+            if (so instanceof String[]) {
+                String[] a = (String[]) so;
+                StringBuilder b = new StringBuilder("[STATE-NAME] ");
+                for (int i = 0; i < a.length; i++) {
+                    b.append(i).append('=').append(a[i]).append(' ');
+                }
+                XposedEntry.log(b.toString());
+                dump("=== NAME_STATE ===\n" + b + "\n");
+            } else {
+                XposedEntry.log("[STATE-NAME] not a String[]: " + so);
+            }
+            Object eo = XposedHelpers.getStaticObjectField(gsCls, "NAME_EVENT");
+            if (eo instanceof String[]) {
+                String[] a = (String[]) eo;
+                StringBuilder b = new StringBuilder("[EVENT-NAME] ");
+                for (int i = 0; i < a.length; i++) {
+                    b.append(i).append('=').append(a[i]).append(' ');
+                }
+                XposedEntry.log(b.toString());
+                dump("=== NAME_EVENT ===\n" + b + "\n");
+            } else {
+                XposedEntry.log("[EVENT-NAME] not a String[]: " + eo);
+            }
+        } catch (Throwable t) {
+            XposedEntry.log("[STATE-NAME] immediate read failed: " + t);
+        }
+
+        try {
+            final android.os.Handler h =
+                    new android.os.Handler(android.os.Looper.getMainLooper());
+            h.postDelayed(new Runnable() {
+                @Override
+                public void run() {
+                    try {
+                        Class<?> gmCls = Class.forName(
+                                "com.tencent.mobileqq.app.guard.GuardManager",
+                                false, HookConfig.getClassLoader());
+                        Object inst = XposedHelpers.getStaticObjectField(gmCls, "sInstance");
+                        if (inst == null) {
+                            XposedEntry.log("[STATE-ID] sInstance is null");
+                            return;
+                        }
+                        StringBuilder sb = new StringBuilder("[STATE-ID] map:");
+                        for (int id = 0; id <= 7; id++) {
+                            String nm = "?";
+                            try {
+                                Object st = XposedHelpers.callMethod(inst, "getState", id);
+                                if (st != null) nm = st.getClass().getSimpleName();
+                            } catch (Throwable t) {
+                                nm = "ERR:" + t.getClass().getSimpleName();
+                            }
+                            sb.append(' ').append(id).append('=').append(nm);
+                        }
+                        XposedEntry.log(sb.toString());
+                        dump("=== STATE ID MAP ===\n" + sb.toString() + "\n");
+
+                        // NAME_STATE / NAME_EVENT：状态名与事件名数组，
+                        // 直接读出来就能把 id 映射和事件语义一次性搞清楚
+                        try {
+                            Class<?> gsCls = Class.forName(
+                                    "com.tencent.mobileqq.app.guard.GuardState",
+                                    false, HookConfig.getClassLoader());
+                            String[] stNames = (String[]) XposedHelpers
+                                    .getStaticObjectField(gsCls, "NAME_STATE");
+                            String[] evNames = (String[]) XposedHelpers
+                                    .getStaticObjectField(gsCls, "NAME_EVENT");
+                            StringBuilder b2 = new StringBuilder("[STATE-NAME] ");
+                            if (stNames != null) {
+                                for (int i = 0; i < stNames.length; i++) {
+                                    b2.append(i).append('=').append(stNames[i]).append(' ');
+                                }
+                            }
+                            XposedEntry.log(b2.toString());
+                            dump("=== NAME_STATE ===\n" + b2 + "\n");
+
+                            StringBuilder b3 = new StringBuilder("[EVENT-NAME] ");
+                            if (evNames != null) {
+                                for (int i = 0; i < evNames.length; i++) {
+                                    b3.append(i).append('=').append(evNames[i]).append(' ');
+                                }
+                            }
+                            XposedEntry.log(b3.toString());
+                            dump("=== NAME_EVENT ===\n" + b3 + "\n");
+                        } catch (Throwable t) {
+                            XposedEntry.log("[STATE-NAME] failed: " + t);
+                        }
+                    } catch (Throwable t) {
+                        XposedEntry.log("[STATE-ID] dump failed: " + t);
+                    }
+                }
+            }, 8000);
+        } catch (Throwable t) {
+            XposedEntry.log("[STATE-ID] schedule failed: " + t);
         }
     }
 
