@@ -1,95 +1,102 @@
-# QQ Native Guard 文档索引
+# 文档索引
 
 > 最后更新：2026-11-25
 
 ## 一、按重要性排序
 
-| # | 文档 | 内容 | 状态 |
+| # | 文档 | 内容 | 更新 |
 |---|---|---|---|
-| 1 | **[CHANNEL5_WLOGIN_GUID.md](CHANNEL5_WLOGIN_GUID.md)** | ★ 第 5 指纹通道完整查证（文件位置+5处存储+本质） | 2026-11-25 新 |
-| 2 | **[FLAW_SP_IMEI.md](FLAW_SP_IMEI.md)** | ★ `sp_imei` 字段装的是 AndroidID（格式矛盾） | 2026-11-25 新 |
-| 3 | **[CORRECTIONS.md](CORRECTIONS.md)** | ★ 全部被证伪/修正的结论（8 个错误） | 2026-11-25 新 |
-| 4 | [K54_ROOT_CAUSE.md](K54_ROOT_CAUSE.md) | k54 来源是 `ro.product.board` 不是 `ro.board.platform` | 已验证 |
-| 5 | [EXTERNAL_RESEARCH.md](EXTERNAL_RESEARCH.md) | 外部资料调研（腾讯 RiskType / 参考项目 / qsign） | 2026-11-25 |
-| 6 | [VERIFY_REPORT.md](VERIFY_REPORT.md) | 23 项端到端验证结果 | 23/23 PASS |
-| 7 | [DETECTION_AUDIT.md](DETECTION_AUDIT.md) | dex 扫描方法与 13 个已覆盖检测类 | — |
-| 8 | [EXPOSURE_AUDIT.md](EXPOSURE_AUDIT.md) | 7 大类暴露面完整清单 | — |
-| 9 | [SETUP_REPORT.md](SETUP_REPORT.md) | 项目搭建过程与技术债 | — |
+| **1** | **[README.md](README.md)** | ★ **技术总纲（跨会话必读）**：项目概况/5通道/4种下线/证据分级/10条教训 | 2026-11-25 |
+| **2** | **[important.md](important.md)** | ★ **复盘核查报告**：实机验证结果 + 发现的2个问题 | 2026-11-25 |
+| 3 | [EVIDENCE_LEVELS.md](EVIDENCE_LEVELS.md) | 证据分级 A/B/C/D，区分「已验证」与「推断」 | 2026-11-25 |
+| 4 | [CORRECTIONS.md](CORRECTIONS.md) | 9 个被证伪的结论 + 3 个被修正的判断 | 2026-11-25 |
+| 5 | [GUID_SOURCE_EXPERIMENT.md](GUID_SOURCE_EXPERIMENT.md) | 三次单变量实验（方法论范本） | 2026-11-25 |
+| 6 | [GUID_FAKE_IMPLEMENTED.md](GUID_FAKE_IMPLEMENTED.md) | GUID 伪造实现细节 | 2026-11-25 |
+| 7 | [GUID_SERVER_RESPONSE.md](GUID_SERVER_RESPONSE.md) | 换 GUID 后服务端无验证（票据绑定≠设备识别） | 2026-11-25 |
+| 8 | [CHANNEL5_WLOGIN_GUID.md](CHANNEL5_WLOGIN_GUID.md) | 第 5 通道的存储位置查证 | 2026-11-25 |
+| 9 | [K54_ROOT_CAUSE.md](K54_ROOT_CAUSE.md) | `ro.product.board` vs `ro.board.platform` | 已验证 |
+| 10 | [EXTERNAL_RESEARCH.md](EXTERNAL_RESEARCH.md) | 外部资料调研（腾讯 RiskType / WeChatTablet / NapCat） | 2026-11-25 |
+| 11 | [FLAW_SP_IMEI.md](FLAW_SP_IMEI.md) | `sp_imei` 装 AndroidID（但不上报，风险已降级） | 2026-11-25 |
+| 12 | [VERIFY_REPORT.md](VERIFY_REPORT.md) | 23 项端到端验证结果（23/23 PASS） | 2026-11-24 |
+| 13 | [DETECTION_AUDIT.md](DETECTION_AUDIT.md) | dex 扫描方法与 13 个已覆盖检测类 | 2026-11-24 |
+| 14 | [EXPOSURE_AUDIT.md](EXPOSURE_AUDIT.md) | 7 大类暴露面完整清单 | 2026-11-24 |
+| 15 | [SETUP_REPORT.md](SETUP_REPORT.md) | 项目搭建过程与技术债 | 2026-11-24 |
 
-## 二、核心结论速查
+## 二、阅读顺序建议
 
-### 设备信息走 5 个通道
+**新会话接手**：
+```
+1. docs/README.md        ← 只读这个就够（技术总纲）
+2. docs/important.md     ← 看最近一次核查的实际状态
+3. docs/CORRECTIONS.md   ← 避免重复踩过的坑
+```
 
-| # | 通道 | 状态 |
+**要动某个具体技术点**：
+```
+QsecEst/k54      → K54_ROOT_CAUSE.md
+GUID             → GUID_SOURCE_EXPERIMENT.md → GUID_FAKE_IMPLEMENTED.md
+可信度存疑        → EVIDENCE_LEVELS.md
+外部方案参考      → EXTERNAL_RESEARCH.md
+```
+
+## 三、根目录文件的区别
+
+| 位置 | 内容 | 读者 |
 |---|---|---|
-| ① | QsecEst 85 字段 | ✅ 已对齐（k54=kalama） |
-| ② | HTTP User-Agent | ✅ 已对齐（http.agent 重算） |
-| ③ | MSF 8080 | ✅ QIMEI 已对齐 |
-| ④ | VOD_MSDK | ✅ 已 hook |
-| ⑤ | **wlogin GUID** | ❌ **未处理（2026-11-25 查明）** |
+| **根目录 `README.md`**（11.7KB） | 面向 GitHub 访客：项目介绍、技术亮点、安装使用 | 外部用户 |
+| **`docs/README.md`**（8.5KB） | 面向开发者：技术总纲、状态、教训 | 内部/自己 |
 
-### `w21` 的本质（推断，未证实）
+**根目录 README 是「对外宣传」，docs/README 是「对内记忆」。**
 
-**推断**：服务端账号级判定。**能确认的**：文案是「身份验证失败」，发生在登录成功后（异步 push）。
-**不能确认的**：服务端具体用什么判定、权重如何。详见 EVIDENCE_LEVELS.md。
-
-三处旁证（**非独立验证**）：
-- 腾讯云文档有 RiskType 表（但可能是另一套系统）
-- 参考项目称误拦 device_lock 会导致 w21（我们未复现）
-- 上游作者称频繁掉线可能是账号风控
-
-### 四种下线方式的区分
-
-| 类型 | 判据 | 能否本地解决 |
-|---|---|---|
-| ① w21 账号验证 | `KICK_TO_LOGIN=1` + 文案 | ❌ |
-| ② 进程自杀 | `EXIT_SELF status=255` + GuardManager.exit | ⚠️ 可能 |
-| ③ 会话过期 | `rst1=17` + `rlen 2377→193` | ✅ 重登 |
-| ④ 系统杀进程 | `reason=2 SIGNALED` | — |
-
-## 三、工具清单
+## 四、工具清单
 
 | 工具 | 用途 |
 |---|---|
-| `tools/verify_all2.py` | 23 项端到端验证（分三种视角） |
+| `tools/verify_all2.py` | 23 项端到端验证（分三视角） |
 | `tools/audit_full.sh` | 7 大类暴露面审计 |
-| `tools/observe_v4.sh` | 会话监控（按时间戳过滤，不污染） |
-| `tools/diag_suicide.sh` | 自杀诊断日志（只记关键行） |
+| `tools/observe_v4.sh` | 会话监控（按时间戳过滤） |
+| `tools/diag_suicide.sh` | 自杀诊断日志 |
+| `tools/verify_master.sh` | 核查配置与硬约束 |
 | `tools/api_push.py` | git 不通时用 API 推文件 |
 | `tools/create_repo.py` | 创建仓库 |
 
-`tools/archive/` 有 48 个一次性调试脚本（按需查阅）。
+`tools/archive/` 有 57 个一次性脚本（按需查阅）。
 
-## 四、待办（按优先级）
+## 五、核心结论速查
 
-| # | 任务 | 难度 | 价值 |
-|---|---|---|---|
-| 1 | **修 `sp_imei`**（改 MMKV 值为合法 IMEI） | 低 | ★★★ 消除格式矛盾 |
-| 2 | **实施 GUID 轮换**（5 处同步） | 中 | ★★★ 补第 5 通道 |
-| 3 | 决定是否轮换 wlogin RSA 密钥对 | 中 | ★★ |
-| 4 | 加固 `libnative-memory-library-lib.so` 的 syscall 路径 | 高 | ★★ |
-| 5 | 补 `PackageManager` 的 `*AsUser` 变体 | 低 | ★ |
-| 6 | 修日志措辞（`intercepted` → `observed`） | 低 | ★ |
+### 设备信息 5 通道
 
-## 五、当前环境状态
+| # | 通道 | 状态 |
+|---|---|---|
+| ① | QsecEst 85 字段 | ✅ k54=kalama |
+| ② | HTTP User-Agent | ✅ http.agent 重算 |
+| ③ | MSF 8080 | ✅ QIMEI 对齐 |
+| ④ | VOD_MSDK | ✅ 已 hook |
+| ⑤ | wlogin GUID | ✅ 已伪造 |
 
-```
-机型: OPPO Find X7 (PGT110 / OPPO_PGT110)
-平台: kalama (骁龙 8 Gen 3)  ← k54 修复
-Build: UKQ1.231003.002
-FP: OPPO/PGT110/OPPO_PGT110:15/UKQ1.231003.002/1710000000:user/release-keys
-观测: NETWORK_OBSERVE_ONLY=true（挂 hook 不拦截）
-```
+### 「设备识别」vs「票据绑定」
 
-**待处理矛盾**：
-- `sp_imei` = `<16-hex-android-id>`（AndroidID 形状，应为 15 位 IMEI）
-- `wlogin GUID` = `7a7b...cc0d`（独立于我们的伪造体系）
+| 用途 | 锚点 |
+|---|---|
+| 设备识别 | QIMEI / AndroidID / 机型 / serial |
+| **票据绑定** | **GUID** |
 
-## 六、关键教训（写在最显眼处）
+改 GUID → 票据作废（需重登），**不被当新设备**（实测）。
 
-1. **抓包 > hook 日志** —— 靠 hook 推断全会漏
-2. **字段映射表逐项核对** —— 不能凭属性名"看起来像"
-3. **审计要用目标进程的域** —— root shell ≠ untrusted_app
-4. **确认日志的 PID 归属** —— 看到关键词就归因必出错
-5. **端到端验证** —— 改了不等于生效（k54 的教训）
-6. **日志措辞不可信** —— 读代码确认实际行为
+### 四种下线方式
+
+| 类型 | 判据 | 本地可解 |
+|---|---|---|
+| ① w21 账号验证 | `KICK_TO_LOGIN=1` + 文案 | ❌ |
+| ② 进程自杀 | `EXIT_SELF 255` | ⚠️ 可 hook |
+| ③ 会话过期 | `rst1=17` + `rlen 2377→193` | ✅ 重登 |
+| ④ 系统杀进程 | `SIGNALED 9` | — |
+
+### 硬约束
+
+- ❌ 不卸载 MT 管理器 / UU远程
+- ✅ qfun 保持工作
+- ❌ 不让 QQ 自杀
+- ⚠️ MMKV hook 禁用（会崩）
+- ⚠️ `prctl` hook 禁用（QQ 自杀）
+- ⚠️ 不拦 `wtlogin.device_lock`（致 w21）
