@@ -65,6 +65,13 @@ static char g_env[19][256];
  */
 static char g_first_api_level[8] = "34";
 
+/**
+ * ro.soc.model —— SoC 型号，强指纹。
+ * 真机 SM8350（骁龙 888），伪造目标 PGT110 应为 SM8650（骁龙 8 Gen 3）。
+ * 与 ro.board.platform=kalama、ro.soc.manufacturer=Qualcomm 一起构成自洽三元组。
+ */
+static char g_soc_model[32] = "SM8650";
+
 // 调用者归因开关（观测用，默认开；deep=对 libc 中转层做帧指针回溯）
 static bool g_attr_on = false;
 static bool g_attr_deep = false;
@@ -1343,6 +1350,15 @@ static const char* fake_prop_value(const char* name) {
         }
 
         // 机型画像
+        // 【2026-11-26】ro.soc.model 是强指纹：真机 SM8350（骁龙888），
+        // 伪造目标 PGT110（OPPO Find X7）应为 SM8650（骁龙 8 Gen 3）。
+        // fekit 当前未读取该属性，但 Turing/Qimei 等 SDK 随时可能读，
+        // 一旦读到即暴露真机 SoC，故防御性补上。
+        // 注意：ro.soc.manufacturer 两边都是 Qualcomm，不需要伪造。
+        if (strcmp(name, "ro.soc.model") == 0) {
+            return g_soc_model;
+        }
+
         if (strcmp(name, "ro.product.model") == 0 ||
             strcmp(name, "ro.product.vendor.model") == 0 ||
             strcmp(name, "ro.product.system.model") == 0 ||
