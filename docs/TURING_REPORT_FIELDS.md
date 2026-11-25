@@ -1,7 +1,12 @@
 # Turing `devicetoken_report` 揭示的上报字段（2026-11-25）
 
 > 从 Turing 的 MMKV 配置里挖出一份**明确的上报字段清单**，
-> 由此发现一个真实缺口：`wifissid` 从未被处理。
+> 由此定位了 `wifissid` 字段，并补上了 `getSSID` 的 hook。
+>
+> ⚠️ **2026-11-25 实测修正**：配置虽写 `wifissid: "1"`，但 QQ **从不调用**
+> `WifiInfo.getSSID()`（重启后持续观察 0 次），各 native 库（libturingxq /
+> libqimei / libmsfbootV2）也无 SSID 字符串。说明该字段**配置存在但客户端
+> 不采集**。hook 作为防御保留，当前未被触发。
 
 ---
 
@@ -134,22 +139,38 @@ WifiInfo SSID forced: TP-LINK_5G   × 3 个进程（主进程 + 2 子进程）
 
 **hook 安装成功。**
 
-### 未确认
+### 实测结论：hook 从未被触发
+
+持续观察后确认：
 
 ```
-[SSID] origin="<real-ssid>" -> fake=TP-LINK_5G
+[SSID] origin=... 日志   → 0 次
+getSSID 实际调用          → 0 次
 ```
 
-**这条日志还没出现** → 说明重启后 30 秒内 QQ 尚未调用 `getSSID`。
+**交叉验证，四个方向全部指向「客户端不采集 SSID」**：
 
-**为什么难验证**：
+| 检查项 | 结果 |
+|---|---|
+| `libturingxq` 的 ssid/wifi 字符串 | **0 条** |
+| `libqimei` 的 ssid/wifi 字符串 | **0 条** |
+| `libmsfbootV2` 的 ssid/wifi 字符串 | **0 条** |
+| `libkernel` 的 wifi 命中（401 条） | 全是 `WiFiPhoto`（WiFi 传文件功能），与 SSID 采集无关 |
+| QQ 的 `ACCESS_WIFI_STATE` 权限 | `granted=true` —— **有权限但不调用** |
 
-- SSID **不落盘成明文**（实测 QQ 数据目录里 `<real-ssid>` 命中 **0 个文件**）
-- 只在上报时通过加密通道出去
-- 所以无法从文件系统侧验证
+**所以 `wifissid: "1"` 是服务端下发的模板项，客户端并未实现该字段的采集。**
 
-**所以加了日志**：记录第一次被拦截时的原始值。
-等 QQ 触发上报即可确认。
+### 那 hook 还要留吗
+
+**要，作为防御性措施。**
+
+理由：
+- 成本为零（已安装，未触发）
+- 若 QQ 将来启用这条路径（配置项已存在，随时可能打开），hook 立即生效
+- 不引入任何副作用（只在 `afterHookedMethod` 检查，不改其它行为）
+
+**这是「防御性覆盖」而不是「已修复的漏洞」——两者要分清。**
+
 
 ---
 
