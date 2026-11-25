@@ -62,6 +62,9 @@ public class XposedEntry implements IXposedHookLoadPackage {
             // Exit 追踪：尽早挂载，记录所有退出路径（只观测不改行为）
             ExitTraceHook.hook(lpparam);
 
+            // Turing 读取探针：反查风控 SDK 到底读了哪些设备字段
+            TuringReadProbe.hook(lpparam);
+
             if (HookConfig.ENABLE_ROOT_BYPASS) RootDetectionHook.hook(lpparam);
             if (HookConfig.ENABLE_XPOSED_BYPASS) XposedDetectionHook.hook(lpparam);
             if (HookConfig.ENABLE_DEVICE_SPOOF) DeviceInfoHook.hook(lpparam);
