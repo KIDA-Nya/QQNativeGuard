@@ -130,7 +130,7 @@ GUID:   <fake-guid-16B>（伪造，原值为 <orig-guid-16B>）
 **D 级（推断，不能当结论）**：
 - w21 = RiskType 1/201（腾讯云文档，未必是 QQ 那套）
 - 服务端按账号信用评分
-- `libnative-memory` 靠映射异常判定
+- ~~`libnative-memory` 靠映射异常判定~~ → **已证伪（2026-11-25）**：该库未初始化，单例为 NULL，所有检测日志 0 次。详见 `RE_NATIVE_MEMORY.md`
 - 四层独立判定机制
 - GUID 是独立随机量
 - 账号信用衰减规律
@@ -173,6 +173,7 @@ macOS:  GUID = MD5(machine_id[8] || sn)
 | 8 | **心跳停止 ≠ 自杀前兆** | 与 App 前后台相关 |
 | 9 | **MMKV hook 会崩** | 纯观测实现也崩，问题在 hook 本身 |
 | 10 | **`prctl` hook 会让 QQ 自杀** | 已禁用 |
+| 11 | **参考项目的说法要独立验证** | 采信 WeChatTablet 说 libnative-memory 是检测层，实为未启用的 APM |
 
 ---
 
@@ -210,7 +211,7 @@ macOS:  GUID = MD5(machine_id[8] || sn)
 | 1 | **观察本次会话存活时长**（已启动监控） | A | ★★★ |
 | 2 | 验证 GUID 多次重启后持久 | A | ★★ |
 | 3 | 抓包确认 GUID 是否进上报 | A | ★★ |
-| 4 | `libnative-memory` 的 syscall 路径分析 | B | ★★ |
+| 4 | ~~`libnative-memory` 分析~~ ✅ **已完成**：未启用的 APM，非威胁 | — | — |
 | 5 | 补 `PackageManager` 的 `*AsUser` 变体 | B | ★ |
 | 6 | 修日志措辞（`intercepted` → `observed`） | B | ★ |
 

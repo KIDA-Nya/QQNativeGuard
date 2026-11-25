@@ -109,6 +109,35 @@ Beacon(185) Mars(81) Statistics(72) fekit(51) http-net(426)
 
 ---
 
+### ❌ 错误 10：`libnative-memory-library-lib.so` 是漏掉的检测层
+
+**当时的依据**：参考项目（WeChatTablet）README 说它"自带 native_hook_monitor，
+读 maps 找 so 基址、检测文件已删除的映射"。我直接采信，列进"三处技术缺口"。
+
+**证伪（2026-11-25 完整逆向，A/B 级）**：
+
+1. **单例指针为 NULL** —— 读 `.bss` 的 `0xa8478`（NativeMonitor 单例）= 全零
+2. **所有检测日志 0 次** —— `SoLoadHooker` / `terminate for safe reason` /
+   `nativememorymonitor` 的 logcat 计数全部为 0
+3. **JNI 实现是读计数器** —— `nativeGetCurrentHookAppThreadCount` 反汇编：
+   加锁 → `ldr x20,[x20,#16]` → 解锁 → 返回，不检测任何东西
+4. **无 abort/exit 导入** —— 终止类导入只有 `__cxa_atexit` /
+   `__cxa_guard_abort` / `std::terminate`
+
+**真实性质**：未启用的 APM 监控框架（内存 + 流量）。库被 dlopen 了，
+但 `JNI_OnLoad` 未完成初始化，所有 hook 都没安装。
+
+**教训**：
+
+- **参考项目的说法必须独立验证**，不能直接当事实采用
+- **静态分析看出"有能力"，动态验证才能确定"是否启用"**
+- 决定性一步是读 `.bss` 单例指针：为 NULL 就是没跑
+
+**影响**：所谓"三处技术缺口"实际只有 2 处（File / PackageManager），
+这一处是误判。详见 `RE_NATIVE_MEMORY.md`。
+
+---
+
 ## 二、被修正的判断
 
 ### 🔄 修正 1：8080 端口是 MSF 主协议，不是 RMonitor
