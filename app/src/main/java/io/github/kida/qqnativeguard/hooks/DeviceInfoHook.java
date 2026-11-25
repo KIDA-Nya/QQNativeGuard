@@ -357,37 +357,16 @@ public class DeviceInfoHook {
             XposedEntry.log("WifiInfo MAC hook failed: " + t.getMessage());
         }
 
-        // 【V12】ScanResult.SSID：扫描列表里也有 SSID
-        try {
-            final String fakeSsid2 = HookConfig.FAKE_WIFI_SSID;
-            if (fakeSsid2 != null && !fakeSsid2.isEmpty()) {
-                Class<?> wm = XposedHelpers.findClass("android.net.wifi.WifiManager",
-                    HookConfig.getClassLoader());
-                XposedBridge.hookAllMethods(wm, "getScanResults", new XC_MethodHook() {
-                    @Override
-                    protected void afterHookedMethod(MethodHookParam param) throws Throwable {
-                        Object r = param.getResult();
-                        if (!(r instanceof java.util.List)) return;
-                        java.util.List<?> list = (java.util.List<?>) r;
-                        // 只保留一项，且 SSID 改成伪造值，避免暴露周边网络环境
-                        java.util.List<Object> kept = new java.util.ArrayList<>();
-                        for (Object item : list) {
-                            if (item == null) continue;
-                            try {
-                                java.lang.reflect.Field f = item.getClass()
-                                    .getField("SSID");
-                                f.set(item, fakeSsid2);
-                            } catch (Throwable ignored) {
-                            }
-                            kept.add(item);
-                            if (kept.size() >= 3) break;
-                        }
-                        if (!kept.isEmpty()) param.setResult(kept);
-                    }
-                });
-            }
-        } catch (Throwable ignored) {
-        }
+        // 【V12 修订】扫描列表（ScanResult）不做处理。
+        //
+        // 原实现会反射改写每个 ScanResult.SSID 并把列表截断到 3 条，问题有三：
+        //   1. 原地变异 QQ 持有的对象，可能影响它自己的 WiFi 相关逻辑
+        //      （例如 WiFi 传文件需要完整列表）
+        //   2. ScanResult.SSID 在部分 ROM 上反射 set 会失败，hook 静默无效
+        //   3. 实测 wifissid 根本不采集（getSSID 0 次调用），本项收益为零
+        //
+        // 收益为零而风险非零，故移除。若将来确认 QQ 启用了 SSID 采集，
+        // 应改为「返回新的 ScanResult 副本」而不是原地改写。
         try {
             Class<?> bt = XposedHelpers.findClass("android.bluetooth.BluetoothAdapter",
                 HookConfig.getClassLoader());
