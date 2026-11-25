@@ -206,3 +206,71 @@ public void onTick() {                       // BackgroundUnguard
 - `rst1=17` + `rlen` 缩小 → 票据过期
 
 **之前的"四层判定"模型里，这一层一直被误归为服务端行为。**
+
+---
+
+## 九、状态机上下文（2026-11-26 补充）
+
+自杀发生在 `BackgroundUnguard` 状态，所以「何时进入该状态」是触发的前置条件。
+
+### 8 个 GuardState 子类
+
+`GuardManager.getState(int)` 用 `packed-switch` 把状态 ID 映射到实例：
+
+```
+LiteUnguard      轻量·不守护
+LiteGuard        轻量·守护
+BackgroundUnguard  ★ 自杀发生在这里
+BackgroundGuard    普通后台守护
+ForgroundOther     前台·非主进程
+ForgroundMain      前台·主进程
+PrestartGuard      预启动守护
+GuardState         基类兜底
+```
+
+### nextState 的转移机制
+
+```java
+void nextState(int newStateId, Object event) {
+    if (Looper.myLooper() != injector.d()) {
+        mHandler.obtainMessage(6, newStateId, 0, event).sendToTarget();
+        return;                                  // 切到正确线程
+    }
+    if (mStateId == 8) return;                   // ★ 状态 8 = 终态，不再转移
+    if (mStateId != newStateId) {
+        mHandler.sendMessageDelayed(
+            mHandler.obtainMessage(3, mStateId, newStateId), 1000);  // 1 秒后通知
+        mState = getState(newStateId);
+        mStateId = newStateId;
+    } else if (newStateId != 0) {
+        mState = getState(newStateId);
+    }
+    mState.onEvent(5, event);
+}
+```
+
+### 已观测到的转移触发点
+
+`GuardManager.handleMessage` 用 `packed-switch` 按 msg.what 分发，
+其中出现的事件名包括 `"trick_p_msg"`（保活/唤醒相关），
+另有多处直接调用 `nextState(stateId, event)`。
+
+### 运行时实测（A 级）
+
+当前进程处于 **`BackgroundGuard`**。追踪日志里 23 次 `onTick`
+全部来自 `BackgroundGuard`，`BackgroundUnguard` 出现 **0 次** ——
+所以此刻不会自杀。
+
+### 诚实说明：这部分掌握到约 70%
+
+| 项 | 掌握度 |
+|---|---|
+| 自杀判定代码 | 100%（逐条指令确认） |
+| 常量与时间推算 | 100% |
+| status=255 的来源 | 100% |
+| 状态机结构（8 状态 + nextState） | 90% |
+| **进入 Unguard 的具体业务条件** | **70%** |
+
+**要完全确定「什么行为导致进入 Unguard」，需要 hook
+`GuardManager.nextState` 记录每次 (from, to, event)。**
+`ExitTraceHook` 目前未覆盖该方法 —— 这是下一步要做的事。
