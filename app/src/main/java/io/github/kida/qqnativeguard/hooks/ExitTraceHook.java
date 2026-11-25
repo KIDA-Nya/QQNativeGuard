@@ -69,6 +69,9 @@ public final class ExitTraceHook {
         // ---- 4. SystemMethodProxy：57 个调用者的统一入口 ----
         hookWrapper("com.tencent.mobileqq.perf.block.SystemMethodProxy", "killProcess");
 
+        // ---- 5. 状态机采样：算出距离自杀还有多少拍 ----
+        hookGuardStateMachine();
+
         XposedEntry.log("[EXIT-TRACE] installed");
     }
 
@@ -122,6 +125,154 @@ public final class ExitTraceHook {
                     XposedEntry.log("[EXIT-TRACE] wrapper: " + cls + "." + mth);
                 }
             });
+        } catch (Throwable ignored) {
+        }
+    }
+
+    /**
+     * 状态机采样。
+     *
+     * 自杀判定（BackgroundUnguard.onTick）依赖：
+     *   mClearTick == SUICIDE_FACTOR*50 (=250) ± mGuardTick
+     *   且 GuardManager.mFgProcess == null
+     *
+     * 这里每拍读一次两个计数器与 mFgProcess，就能算出：
+     *   - 当前在哪个状态
+     *   - 距离阈值还差多少拍 / 多少分钟
+     *   - 是否满足"无前台进程"这一必要条件
+     */
+    private static void hookGuardStateMachine() {
+        // 5.1 状态转移
+        try {
+            HookUtils.hookAllMethods("com.tencent.mobileqq.app.guard.GuardManager",
+                "nextState", new XC_MethodHook() {
+                    @Override
+                    protected void beforeHookedMethod(MethodHookParam param) throws Throwable {
+                        Object mgr = param.thisObject;
+                        int from = -1;
+                        try {
+                            from = XposedHelpers.getIntField(mgr, "mStateId");
+                        } catch (Throwable ignored) {
+                        }
+                        int to = -1;
+                        if (param.args.length > 0 && param.args[0] instanceof Integer) {
+                            to = (Integer) param.args[0];
+                        }
+                        Object ev = param.args.length > 1 ? param.args[1] : null;
+                        String evs = String.valueOf(ev);
+                        if (evs.length() > 120) evs = evs.substring(0, 120) + "...";
+
+                        // 通过 getState 拿到目标状态的类名，确定 id -> 状态映射
+                        String fromName = "?";
+                        String toName = "?";
+                        try {
+                            Object f = XposedHelpers.callMethod(mgr, "getState", from);
+                            if (f != null) fromName = f.getClass().getSimpleName();
+                        } catch (Throwable ignored) {
+                        }
+                        try {
+                            Object t = XposedHelpers.callMethod(mgr, "getState", to);
+                            if (t != null) toName = t.getClass().getSimpleName();
+                        } catch (Throwable ignored) {
+                        }
+
+                        StringBuilder sb = new StringBuilder();
+                        sb.append("=== STATE TRANSITION ===\n");
+                        sb.append("from=").append(from).append("(").append(fromName)
+                          .append(") to=").append(to).append("(").append(toName)
+                          .append(") event=").append(evs).append('\n');
+                        appendStack(sb);
+                        dump(sb.toString());
+                        XposedEntry.log("[EXIT-TRACE] state " + from + "(" + fromName + ") -> " + to + "(" + toName + ") ev=" + evs);
+                    }
+                });
+        } catch (Throwable ignored) {
+        }
+
+        // 5.2 每拍采样
+        try {
+            HookUtils.hookAllMethods("com.tencent.mobileqq.app.guard.GuardState",
+                "onTick", new XC_MethodHook() {
+                    private int count = 0;
+
+                    @Override
+                    protected void afterHookedMethod(MethodHookParam param) throws Throwable {
+                        try {
+                            count++;
+                            Object st = param.thisObject;
+                            if (st == null) return;
+                            String stateName = st.getClass().getSimpleName();
+
+                            long clearTick = XposedHelpers.getLongField(st, "mClearTick");
+                            long guardTick = XposedHelpers.getLongField(st, "mGuardTick");
+
+                            Object mgr = XposedHelpers.getObjectField(st, "mManager");
+                            String fg = null;
+                            int stateId = -1;
+                            if (mgr != null) {
+                                Object v = XposedHelpers.getObjectField(mgr, "mFgProcess");
+                                fg = (v == null) ? null : String.valueOf(v);
+                                try {
+                                    stateId = XposedHelpers.getIntField(mgr, "mStateId");
+                                } catch (Throwable ignored) {
+                                }
+                            }
+
+                            // 阈值：SUICIDE_FACTOR(5) * 50 = 250
+                            long T = 250;
+                            // 三个候选命中点里，最接近的一个
+                            long d1 = T - guardTick;
+                            long d2 = T;
+                            long d3 = T + guardTick;
+
+                            // 距离最近命中点还差多少
+                            long best = Long.MAX_VALUE;
+                            for (long cand : new long[]{d1, d2, d3}) {
+                                if (cand > clearTick) {
+                                    long gap = cand - clearTick;
+                                    if (gap < best) best = gap;
+                                } else if (cand == clearTick) {
+                                    best = 0;
+                                }
+                            }
+
+                            // 采样策略：每 10 拍一条；接近阈值（<10 拍）每拍一条；命中立刻一条
+                            boolean near = (best >= 0 && best <= 10);
+                            boolean sample = (count % 10 == 0) || near || best == 0;
+                            if (!sample) return;
+
+                            StringBuilder sb = new StringBuilder();
+                            sb.append("=== TICK SAMPLE ===\n");
+                            sb.append("state=").append(stateName)
+                              .append(" id=").append(stateId).append('\n');
+                            sb.append("mClearTick=").append(clearTick)
+                              .append(" mGuardTick=").append(guardTick).append('\n');
+                            sb.append("thresholds: ").append(d1).append(" / ")
+                              .append(d2).append(" / ").append(d3).append('\n');
+                            sb.append("ticks_to_hit=").append(best < 0 ? -1 : best);
+                            if (best > 0) {
+                                sb.append(" (~").append(best * 12 / 60)
+                                  .append(" min)");
+                            }
+                            sb.append('\n');
+                            sb.append("mFgProcess=").append(fg == null ? "null" : fg)
+                              .append(fg == null ? "   <<< 自杀必要条件已满足" : "")
+                              .append('\n');
+                            // 只在 Unguard 状态提示风险
+                            if (stateName.contains("Unguard")) {
+                                sb.append("!! IN UNGUARD STATE — suicide possible at hit\n");
+                            }
+                            dump(sb.toString());
+
+                            if (best == 0 || near) {
+                                XposedEntry.log("[EXIT-TRACE] tick " + stateName
+                                        + " clear=" + clearTick + " guard=" + guardTick
+                                        + " toHit=" + best + " fg=" + fg);
+                            }
+                        } catch (Throwable ignored) {
+                        }
+                    }
+                });
         } catch (Throwable ignored) {
         }
     }
