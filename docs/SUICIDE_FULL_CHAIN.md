@@ -300,3 +300,88 @@ TICK SAMPLE: state=BackgroundGuard id=4
 
 **结论：机制已完整还原（可解释"会不会自杀、多久自杀、什么条件下自杀"），
 但"这一次是否就是这么死的"仍缺运行时抓取。**
+
+---
+
+## 十、最后一轮验证尝试（2026-11-26 01:55）
+
+### 尝试：hook 各 GuardState 子类的构造器
+
+思路：只要 `getState(5)` 被调用过，`BackgroundUnguard.<init>` 必然执行，
+这比 `onEnter` 更底层，且不依赖 `isGuardState` 能否被 hook。
+
+```
+hookAllMethods("com.tencent.mobileqq.app.guard.BackgroundUnguard", "<init>", ...)
+hookAllMethods("com.tencent.mobileqq.app.guard.BackgroundGuard",   "<init>", ...)
+hookAllMethods("com.tencent.mobileqq.app.guard.LiteUnguard",       "<init>", ...)
+hookAllMethods("com.tencent.mobileqq.app.guard.LiteGuard",         "<init>", ...)
+```
+
+### 结果：完全没有输出
+
+**连 `BackgroundGuard.<init>` 都没记录** —— 但它的 `onEnter` 明明有日志，
+说明实例确实被创建过。所以是 hook 本身没挂上，不是"没创建"。
+
+可能原因：
+1. `hookAllMethods` 对 `<init>` 的支持受 Xposed 实现影响
+2. 构造器在 hook 安装之前已被执行（`GuardManager` 在 `handleLoadPackage` 早期就初始化）
+3. R8 对构造器做了内联或合并
+
+**这条路径放弃。** 剩下能用的手段：
+- hook `getState(int)` 而非构造器，直接记录被请求的 id（尚未尝试）
+- 或用 `dexdump` 直接解出 `packed-switch` payload 拿到 what 映射（需要手写 payload 解析）
+
+---
+
+## 十一、最终结论
+
+### 已经完整还原的（机制层面，B 级静态 + A 级运行时交叉验证）
+
+```
+① 状态集合与语义
+   EMPTY(0) BG_FETCH(1) FG_MAIN(2) FG_OTHER(3)
+   BG_GUARD(4) BG_UNGUARD(5) LITE_GUARD(6) LITE_UNGUARD(7) DEAD(8)
+
+② 事件集合与语义
+   MSG(0) RESUME(1) TICK(2) FG(3) BG(4) ENTER(5) MAIN(6)
+
+③ 降级公式
+   isGuardState() 只接受 {4, 6}
+   降级 = nextState(mStateId + 1, PROCESS_TRICK)
+   4 → 5 ，6 → 7
+
+④ 自杀判定
+   SUICIDE_FACTOR = 5 （硬编码，全 dex 唯一 sput）
+   T = 5 × 50 = 250
+   命中 (mClearTick == T ± mGuardTick 或 == T) 且 mFgProcess == null
+   → System.exit(-1)
+
+⑤ 时间尺度
+   tick = 12000ms（实测 12 秒吻合）
+   timeout = timeouts[memLevel + actLevel]
+   timeouts = {64,32,16,12,10} 分钟
+   memoryBarriers = {45,65,85,115} MB
+   实际最早命中 18–50 分钟
+
+⑥ status=255 的来源
+   exit(-1)，Linux 退出码 8 位：-1 & 0xFF = 255
+```
+
+**这套机制足以回答：会不会自杀、多久自杀、什么条件下自杀、为什么是 255。**
+
+### 仍缺运行时证据的三点
+
+| 项 | 限制原因 |
+|---|---|
+| `what=3` 是否降级分支 | `isGuardState` 疑被 R8 内联，hook 无输出；构造器 hook 也未挂上 |
+| 实际触发降级的业务时机 | 同上 |
+| 20:11:58 那次是否走此路径 | 当时无 hook，无法回溯 |
+
+### 对「是否与检测风险无关」的最终表述
+
+**机制层面：确认无关。** 判定输入只有四个变量，写入点全部来自
+定时器、内存读数、活跃度计数、进程/前台状态。没有任何检测结果参与。
+
+**个例层面：不能断言。** 因为缺一次带 hook 的真实自杀记录。
+
+**这条区分必须保持，不能为了结论好看而合并。**

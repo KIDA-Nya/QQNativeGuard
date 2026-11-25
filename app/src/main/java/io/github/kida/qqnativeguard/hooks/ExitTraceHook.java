@@ -70,6 +70,24 @@ public final class ExitTraceHook {
         // ---- 4. SystemMethodProxy：57 个调用者的统一入口 ----
         hookWrapper("com.tencent.mobileqq.perf.block.SystemMethodProxy", "killProcess");
 
+        // ---- 5e. 构造器探针：实例是否真的被创建过 ----
+        // 这比 onEnter 更底层：只要 getState(5) 被调过，构造器就会跑。
+        for (final String sc : new String[]{
+                "BackgroundUnguard", "LiteUnguard", "BackgroundGuard", "LiteGuard"}) {
+            try {
+                HookUtils.hookAllMethods("com.tencent.mobileqq.app.guard." + sc,
+                    "<init>", new XC_MethodHook() {
+                        @Override
+                        protected void afterHookedMethod(MethodHookParam param) throws Throwable {
+                            String s = "[CTOR] " + sc + " created";
+                            XposedEntry.log(s);
+                            dump("=== " + s + " ===\n");
+                        }
+                    });
+            } catch (Throwable ignored) {
+            }
+        }
+
         // ---- 5d. isGuardState 的返回值（降级的前置条件）----
         try {
             HookUtils.hookAllMethods("com.tencent.mobileqq.app.guard.GuardManager",
