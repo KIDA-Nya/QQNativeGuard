@@ -230,6 +230,61 @@ static long fake_syscall(long number, long a1, long a2, long a3, long a4,
     return BYTEHOOK_CALL_PREV(fake_syscall, number, a1, a2, a3, a4, a5, a6);
 }
 
+// ---------------------------------------------------------------------------
+// 三层反检测验证探针（2026-11-26）
+//
+// libturingxq 静态导出了 real_syscall，反汇编确认其实现是内联 svc #1：
+//   mov x8, x0 ; mov x0..x5, x1..x6 ; svc #1
+// 也就是说它完全绕过 libc，hook libc 的 syscall 对它无效。
+// 但它本身是导出符号，ByteHook 可以直接 hook 它 —— 参数固定 7 个，非可变参数。
+//
+// 注意：曾经 hook libc 的 syscall 导致 QQ 在登录路径异常退出（可变参数解引用
+// 无效指针）。本探针只作用于 libturingxq 自己的 real_syscall，且原样转发，
+// 不改任何行为，风险面小得多。
+// ---------------------------------------------------------------------------
+
+typedef long (*real_syscall_t)(long nr, long a1, long a2, long a3,
+                               long a4, long a5, long a6);
+
+static int g_rs_count = 0;
+static const int RS_LOG_LIMIT = 150;
+
+static long fake_real_syscall(long nr, long a1, long a2, long a3,
+                              long a4, long a5, long a6) {
+    BYTEHOOK_STACK_SCOPE();
+    if (g_rs_count < RS_LOG_LIMIT) {
+        g_rs_count++;
+        // syscall 号对照：56=openat 57=close 63=read 78=readlinkat 79=newfstatat
+        //                48=faccessat 178=gettid 172=getpid
+        LOGI("REAL_SYSCALL nr=%ld a1=%ld a2=%ld a3=%ld a4=%ld",
+             nr, a1, a2, a3, a4);
+    }
+    return BYTEHOOK_CALL_PREV(fake_real_syscall, nr, a1, a2, a3, a4, a5, a6);
+}
+
+// dl_iterate_phdr：Turing 的 L2 层（枚举已加载 so）如果启用，必然经 libc 调用它。
+static int g_dlip_count = 0;
+static const int DLIP_LOG_LIMIT = 30;
+
+static int fake_dl_iterate_phdr(int (*cb)(struct dl_phdr_info*, size_t, void*),
+                                void* data) {
+    BYTEHOOK_STACK_SCOPE();
+    // 先验证 hook 本身生效：记录前几次任意来源的调用
+    static int any_count = 0;
+    if (any_count < 8) {
+        any_count++;
+        void* ra = __builtin_return_address(0);
+        bool ft = caller_in_turing(ra);
+        LOGI("DLIP call#%d ra=%p from_turing=%d", any_count, ra, (int) ft);
+    }
+    bool from_turing = caller_in_turing(__builtin_return_address(0));
+    if (from_turing && g_dlip_count < DLIP_LOG_LIMIT) {
+        g_dlip_count++;
+        LOGI("DLIP from libturingxq (cb=%p) <- L2 layer IS active", (void*) cb);
+    }
+    return BYTEHOOK_CALL_PREV(fake_dl_iterate_phdr, cb, data);
+}
+
 void install_hooks() {
     // 先尝试解析一次；解析不到也没关系，发送路径上会再试
     dl_iterate_phdr(find_turing_cb, nullptr);
@@ -241,7 +296,20 @@ void install_hooks() {
     bytehook_hook_all(nullptr, "send", (void*) fake_send, nullptr, nullptr);
     bytehook_hook_all(nullptr, "sendto", (void*) fake_sendto, nullptr, nullptr);
     bytehook_hook_all(nullptr, "write", (void*) fake_write, nullptr, nullptr);
-    // 审计用 syscall hook 已停用：在登录路径上会解引用无效指针导致 QQ 异常退出。\n    // bytehook_hook_all(nullptr, "syscall", (void*) fake_syscall, nullptr, nullptr);
+    // 审计用 syscall hook 已停用：在登录路径上会解引用无效指针导致 QQ 异常退出。
+    // bytehook_hook_all(nullptr, "syscall", (void*) fake_syscall, nullptr, nullptr);
+
+    // ---- 三层反检测验证（只记录，不改行为）----
+    // L1: Turing 自己的 real_syscall（内联 svc #1，绕过 libc）
+    bytehook_stub_t s1 = bytehook_hook_all(nullptr, "real_syscall",
+                                           (void*) fake_real_syscall, nullptr, nullptr);
+    LOGI("hook real_syscall -> %s", s1 ? "ok" : "FAILED");
+
+    // L2: dl_iterate_phdr（Turing 若枚举已加载 so 必经此）
+    bytehook_stub_t s2 = bytehook_hook_all(nullptr, "dl_iterate_phdr",
+                                           (void*) fake_dl_iterate_phdr, nullptr, nullptr);
+    LOGI("hook dl_iterate_phdr -> %s", s2 ? "ok" : "FAILED");
+
     LOGI("libturingxq hooks installed (blocked=%d)", g_blocked_count);
 }
 
