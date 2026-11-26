@@ -14,6 +14,7 @@ import java.util.List;
 import java.util.Locale;
 
 import de.robv.android.xposed.XposedHelpers;
+import io.github.kida.qqnativeguard.config.HookConfig;
 
 /**
  * 行为自检：在 QQ 进程内**实际调用**被 hook 的方法，验证返回值是否正确。
@@ -224,6 +225,28 @@ public final class SelfTest {
               .append(" leak=").append(leak).append('\n');
         } catch (Throwable t) {
             sb.append("  ERROR ").append(t).append('\n');
+        }
+
+        // ---------- 2.9 Turing 类存在性 ----------
+        // 目的：确认 Turing SDK 是「打包但从未启用」还是「已加载并在运行」。
+        // Class.forName(cls, false, loader) 只查存在性，不触发 static 初始化，
+        // 所以不会因探测而激活任何东西。
+        sb.append("\n--- Turing class presence ---\n");
+        String[] turingClasses = {
+            "com.tencent.turingfd.sdk.xq.Pomegranate",
+            "com.tencent.turingfd.sdk.xq.Plum",
+            "com.tencent.turingfd.sdk.xq.Blueberry",
+            "com.tencent.mobileqq.turingfd.TuringSdkManager",
+            "com.tencent.turingcam.oqKCa",
+        };
+        for (String cls : turingClasses) {
+            try {
+                Class.forName(cls, false, HookConfig.getClassLoader());
+                sb.append("  LOADABLE: ").append(cls).append('\n');
+            } catch (Throwable t) {
+                sb.append("  ABSENT  : ").append(cls)
+                  .append("  (").append(t.getClass().getSimpleName()).append(")\n");
+            }
         }
 
         // ---------- 3. 系统属性 ----------
