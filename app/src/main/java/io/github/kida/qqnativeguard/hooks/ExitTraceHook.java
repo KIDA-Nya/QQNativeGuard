@@ -70,6 +70,32 @@ public final class ExitTraceHook {
         // ---- 4. SystemMethodProxy：57 个调用者的统一入口 ----
         hookWrapper("com.tencent.mobileqq.perf.block.SystemMethodProxy", "killProcess");
 
+        // ---- 5f. 自动登录判定（诊断"重启后为何不自动登录"）----
+        // AppRuntime.canAutoLoginFromCache(ctx, uin) 返回 boolean。
+        // 反汇编显示它读 sp_login_auto 里该 uin 的 int 值：
+        //   2 -> 允许自动登录；非 2 -> 不允许。
+        // 实测设备上两个账号都是 2，所以配置层面是允许的 —— 但 16:07 重启后
+        // QQ 并没有尝试登录，需要确认这个方法实际被调用与否、返回什么。
+        try {
+            HookUtils.hookAllMethods("mqq.app.AppRuntime", "canAutoLoginFromCache",
+                new XC_MethodHook() {
+                    @Override
+                    protected void afterHookedMethod(MethodHookParam param) throws Throwable {
+                        try {
+                            Object uin = param.args.length > 1 ? param.args[1] : null;
+                            Object r = param.getResult();
+                            String s = "[AUTO-LOGIN] canAutoLoginFromCache uin=" + uin
+                                    + " -> " + r;
+                            XposedEntry.log(s);
+                            dump("=== " + s + " ===\n");
+                        } catch (Throwable ignored) {
+                        }
+                    }
+                });
+        } catch (Throwable t) {
+            XposedEntry.log("[AUTO-LOGIN] hook failed: " + t);
+        }
+
         // ---- 5e. 构造器探针：实例是否真的被创建过 ----
         // 这比 onEnter 更底层：只要 getState(5) 被调过，构造器就会跑。
         for (final String sc : new String[]{
