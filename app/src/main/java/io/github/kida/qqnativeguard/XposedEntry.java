@@ -64,6 +64,10 @@ public class XposedEntry implements IXposedHookLoadPackage {
 
             // Turing 读取探针：反查风控 SDK 到底读了哪些设备字段
             TuringReadProbe.hook(lpparam);
+            // 踢线瞬间快照：下次被 w21 踢时把完整状态抓下来
+            KickSnapshot.hook(lpparam);
+            // 阻止后台静默自杀（自杀会导致会话异常中断，进而被服务端踢线）
+            SuicideGuard.hook(lpparam);
 
             if (HookConfig.ENABLE_ROOT_BYPASS) RootDetectionHook.hook(lpparam);
             if (HookConfig.ENABLE_XPOSED_BYPASS) XposedDetectionHook.hook(lpparam);
