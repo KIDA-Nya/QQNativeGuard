@@ -380,6 +380,30 @@ private static void hookLightDeviceRoot() {
                         }
                     }
                 });
+                // 【2026-11-26】getGuidFromFile 是另一条独立的 GUID 读取路径。
+                //
+                // 反汇编 oicq.wlogin_sdk.tools.util.getGuidFromFile(Context) 显示：
+                //   1) 若 oicq.wlogin_sdk.request.w.g0 非空，返回它（客户自定义 GUID）
+                //   2) 否则读 <filesDir>/wlogin_device.dat
+                //
+                // 实测该文件内容 = 7a7b60913d36d97303f7d28f13edcc0d（真机）
+                // 而伪造值是 be767c1b41b04915af284e6c5db89589
+                //
+                // 两个 GUID 同时存在于登录流程中，正是服务端错误码
+                // KLOGINERRORDIFFGUIDBETWEENQQHEADANDLOGINHEAD 的直接成因：
+                // 登录头和 QQ 头里的 GUID 对不上，登录被拒（不是踢线，所以 KICK=0）。
+                HookUtils.hookAllMethods(cls, "getGuidFromFile", new XC_MethodHook() {
+                    @Override
+                    protected void afterHookedMethod(MethodHookParam param) throws Throwable {
+                        Object r = param.getResult();
+                        if (r instanceof byte[]) {
+                            param.setResult(fakeGuid.clone());
+                        }
+                    }
+                });
+                XposedEntry.log("[WLOGIN-UTIL] getGuidFromFile -> FAKED "
+                        + HookConfig.FAKE_WLOGIN_GUID);
+
                 XposedEntry.log("[WLOGIN-UTIL] generateGuid -> FAKED " + HookConfig.FAKE_WLOGIN_GUID);
             }
         }
