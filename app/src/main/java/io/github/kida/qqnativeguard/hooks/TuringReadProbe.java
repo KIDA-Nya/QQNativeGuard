@@ -83,15 +83,16 @@ public final class TuringReadProbe {
             "getConnectionInfo", "getScanResults", "getDhcpInfo",
         });
 
-        // 包列表（中频，Turing 会查 root 管理器）
-        probeAll("android.app.ApplicationPackageManager", new String[]{
-            "getPackageInfo", "getInstalledPackages", "getInstalledApplications",
-        });
+        // 包列表（Turing 用它查是否装了 root 管理工具）—— 记录具体包名
+        probePackageManager("getPackageInfo");
+        probePackageManager("getInstalledPackages");
+        probePackageManager("getInstalledApplications");
 
-        // 文件（高频，靠采样限流）
-        probeAll("java.io.File", new String[]{
-            "exists", "canRead", "isFile", "isDirectory",
-        });
+        // 文件（Turing root 检测的主力）—— 记录具体路径
+        probeFile("exists");
+        probeFile("canRead");
+        probeFile("isFile");
+        probeFile("isDirectory");
 
         // 进程 / 调试
         probeAll("java.lang.Runtime", new String[]{"exec"});
@@ -237,9 +238,70 @@ public final class TuringReadProbe {
      * 检查调用栈里有没有 turing / turingfd / turingcam。
      * 命中则记录一次（去重，避免刷爆）。
      */
+    /**
+     * 快速预检：只看前 14 层栈，用 startsWith 而非 contains。
+     * Turing 的调用栈通常不深，这样能把开销压到可接受范围。
+     */
+    private static boolean quickTuringCheck() {
+        StackTraceElement[] st = Thread.currentThread().getStackTrace();
+        int n = st.length < 14 ? st.length : 14;
+        for (int i = 3; i < n; i++) {
+            String cn = st[i].getClassName();
+            if (cn != null && cn.startsWith("com.tencent.turing")) return true;
+        }
+        return false;
+    }
+
+    /**
+     * File 专用探针：记录**具体路径**。
+     * Turing 的 root 检测就是靠 File.exists 查 su 路径，不记路径等于白抓。
+     */
+    private static void probeFile(final String method) {
+        try {
+            HookUtils.hookAllMethods("java.io.File", method, new XC_MethodHook() {
+                @Override
+                protected void beforeHookedMethod(MethodHookParam param) throws Throwable {
+                    if (!quickTuringCheck()) return;
+                    Object self = param.thisObject;
+                    String path = "?";
+                    try {
+                        path = String.valueOf(XposedHelpers.callMethod(self, "getPath"));
+                    } catch (Throwable ignored) {
+                    }
+                    report("File." + method, path);
+                }
+            });
+        } catch (Throwable ignored) {
+        }
+    }
+
+    /**
+     * PackageManager 专用探针：记录**具体包名 / 参数**。
+     */
+    private static void probePackageManager(final String method) {
+        try {
+            HookUtils.hookAllMethods("android.app.ApplicationPackageManager", method,
+                new XC_MethodHook() {
+                    @Override
+                    protected void beforeHookedMethod(MethodHookParam param) throws Throwable {
+                        if (!quickTuringCheck()) return;
+                        StringBuilder d = new StringBuilder();
+                        for (int i = 0; i < param.args.length && i < 2; i++) {
+                            if (i > 0) d.append(", ");
+                            d.append(String.valueOf(param.args[i]));
+                        }
+                        report("PM." + method, d.toString());
+                    }
+                });
+        } catch (Throwable ignored) {
+        }
+    }
+
     private static void report(String api, String detail) {
-        // 采样限流：高频 API 只有 1/64 的调用会进入真正的栈检查
-        if ((tick.incrementAndGet() & SAMPLE_MASK) != 0) return;
+        // 【2026-11-26 修正】原先 1/64 采样导致漏掉 98% 的 Turing 调用。
+        // 现在改为：快速预检（只看前 14 层、用 startsWith 不用 contains）
+        // 通过后才做完整栈处理，靠 seen 去重防止日志爆炸。
+        if (!quickTuringCheck()) return;
         try {
             StackTraceElement[] st = Thread.currentThread().getStackTrace();
             String hit = null;
